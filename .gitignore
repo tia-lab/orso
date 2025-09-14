@@ -1,0 +1,69 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Node.js & Dependencies  
+node_modules/
+.pnp
+.pnp.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+bun.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Testing
+coverage
+
+# Build Outputs
+.next/
+out/
+build
+dist
+.turbo
+
+# Deployment
+.vercel
+
+# Misc
+*.pem
+
+# Project specific
+.aichat/sessions/
+resources
+data
+ZZCRATES
+
+
+test_*.db
+test_*.sqlite

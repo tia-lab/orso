@@ -1,0 +1,27 @@
+[package]
+name = "orso"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "ORSO - ORm for turSO "
+
+[dependencies]
+orso-macros = { path = "./orso-macros" }
+libsql = "0.9.14"
+serde = { workspace = true }
+serde_json = { workspace = true }
+dotenv = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+[dev-dependencies]
+tracing-test = "0.2"
+
+
+[lib]
+name = "orso"
+path = "src/lib.rs"
