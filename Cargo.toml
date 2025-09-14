@@ -1,26 +1,33 @@
 [package]
 name = "orso"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-description = "ORSO - ORm for turSO "
+description = "ORSO - A ORm for turSO and SQLite with zero-loss migrations"
+version = "0.0.1"
+edition = "2021"
+authors = ["Tia"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tia-lab/orso"
+homepage = "https://github.com/tia-lab/orso"
+documentation = "https://docs.rs/orso"
+keywords = ["orm", "database", "sqlite", "turso", "async"]
+categories = ["database"]
+readme = "README.md"
 
 [dependencies]
-orso-macros = { path = "./orso-macros" }
+orso-macros = { path = "./orso-macros", version = "0.1.0" }
 libsql = "0.9.14"
-serde = { workspace = true }
-serde_json = { workspace = true }
-dotenv = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true }
-chrono = { workspace = true }
-tracing = { workspace = true }
-anyhow = { workspace = true }
-uuid = { workspace = true }
-async-trait = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dotenv = "0.15"
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+anyhow = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+async-trait = "0.1"
+
 [dev-dependencies]
 tracing-test = "0.2"
-
 
 [lib]
 name = "orso"
