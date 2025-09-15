@@ -7,12 +7,14 @@ ORSO is a Rust ORM (Object-Relational Mapping) library for working with SQLite a
 - **Derive-based schema definition**: Use `#[derive(Orso)]` to automatically generate database schema from Rust structs
 - **Multiple database modes**: Support for local SQLite, remote Turso, sync, and embedded modes
 - **Automatic schema management**: Generate SQL schema and handle migrations
-- **CRUD operations**: Create, read, update, and delete records
+- **CRUD operations**: insert, read, update, and delete records
 - **Batch operations**: Efficient handling of multiple records
 - **Query building**: Flexible query construction with filtering and sorting
 - **Pagination**: Support for paginated results
 - **Foreign key relationships**: Define relationships between tables
 - **Type mapping**: Automatic conversion between Rust types and database types
+- **Utility operations**: Existence checks, field-based queries, latest/first record finding, and batch ID operations
+- **Runtime table selection**: Use `_with_table` methods to work with multiple tables using the same struct
 
 ## Installation
 
@@ -98,7 +100,7 @@ let user = User {
     email: "john@example.com".to_string(),
     age: 30,
 };
-user.create(&db).await?;
+user.insert(&db).await?;
 
 // Read
 let user = User::find_by_id("user-uuid", &db).await?;
@@ -117,13 +119,47 @@ if let Some(user) = User::find_by_id("user-uuid", &db).await? {
 }
 ```
 
+### 5. Use New Utility Methods
+
+```rust
+use orso::{filter, filter_op, Value};
+
+// Existence checks (very efficient - returns bool without fetching data)
+let has_users = User::exists(&db).await?;
+let has_adults = User::exists_filter(
+    filter_op!(filter!("age", orso::Operator::Ge, 18)),
+    &db
+).await?;
+
+// Find by any field
+let johns = User::find_by_field("name", Value::Text("John".to_string()), &db).await?;
+let gmail_users = User::find_by_field("email", Value::Text("gmail.com".to_string()), &db).await?;
+
+// Find latest/first records with filters
+let filter = filter_op!(filter!("age", orso::Operator::Gt, 25));
+let latest_adult = User::find_latest_filter(filter.clone(), &db).await?;
+let first_adult = User::find_first_filter(filter, &db).await?;
+
+// Find latest/first by specific field
+let latest_john = User::find_latest_by_field("name", Value::Text("John".to_string()), &db).await?;
+
+// Batch operations for performance
+let user_ids = vec!["id1", "id2", "id3"];
+let users = User::find_by_ids(&user_ids, &db).await?;
+
+let ages = vec![Value::Integer(25), Value::Integer(30), Value::Integer(35)];
+let specific_ages = User::find_by_field_in("age", &ages, &db).await?;
+
+println!("Found {} users with specific ages", specific_ages.len());
+```
+
 ## Custom Table Operations (`_with_table` methods)
 
 All CRUD operations have `_with_table` variants that allow you to specify a custom table name at runtime, enabling one struct to work with multiple tables:
 
 ```rust
 // Create in custom table
-user.create_with_table(&db, "users_archive").await?;
+user.insert_with_table(&db, "users_archive").await?;
 
 // Read from custom table
 let user = User::find_by_id_with_table("user-uuid", &db, "users_archive").await?;
@@ -141,7 +177,7 @@ let count = User::count_with_table(&db, "users_archive").await?;
 
 ### Complete Example: Multiple Tables from One Struct
 
-Here's a practical example of using one struct to create and manage multiple tables:
+Here's a practical example of using one struct to insert and manage multiple tables:
 
 ```rust
 use orso::{Orso, Database, DatabaseConfig, Migrations, migration};
@@ -199,9 +235,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Insert data into different tables using the same struct
-    btc_1h.create_with_table(&db, "indicators_1h").await?;
-    btc_4h.create_with_table(&db, "indicators_4h").await?;
-    btc_1d.create_with_table(&db, "indicators_1d").await?;
+    btc_1h.insert_with_table(&db, "indicators_1h").await?;
+    btc_4h.insert_with_table(&db, "indicators_4h").await?;
+    btc_1d.insert_with_table(&db, "indicators_1d").await?;
 
     // Query data from different timeframes
     let hourly_data = IndicatorsData::find_all_with_table(&db, "indicators_1h").await?;
@@ -227,7 +263,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Batch operations on specific tables
     let more_data = vec![/* ... more IndicatorsData instances ... */];
-    IndicatorsData::batch_create_with_table(&more_data, &db, "indicators_1h").await?;
+    IndicatorsData::batch_insert_with_table(&more_data, &db, "indicators_1h").await?;
 
     Ok(())
 }
@@ -238,7 +274,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 All standard operations have `_with_table` variants:
 
 **CRUD Operations:**
-- `create_with_table(&self, db, table_name)`
+
+- `insert_with_table(&self, db, table_name)`
 - `find_by_id_with_table(id, db, table_name)`
 - `find_all_with_table(db, table_name)`
 - `find_where_with_table(filter, db, table_name)`
@@ -246,19 +283,23 @@ All standard operations have `_with_table` variants:
 - `delete_with_table(&self, db, table_name)`
 
 **Advanced Operations:**
-- `create_or_update_with_table(&self, db, table_name)`
+
+- `insert_or_update_with_table(&self, db, table_name)`
 - `upsert_with_table(&self, db, table_name)`
 - `count_with_table(db, table_name)`
 - `count_where_with_table(filter, db, table_name)`
 
 **Batch Operations:**
-- `batch_create_with_table(models, db, table_name)`
+
+- `batch_insert_with_table(models, db, table_name)`
 - `batch_update_with_table(models, db, table_name)`
 - `batch_delete_with_table(ids, db, table_name)`
 - `batch_upsert_with_table(models, db, table_name)`
 
 **Query Operations:**
+
 - `find_one_with_table(filter, db, table_name)`
+- `find_latest_with_table(db, table_name)`
 - `find_paginated_with_table(pagination, db, table_name)`
 - `find_where_paginated_with_table(filter, pagination, db, table_name)`
 - `search_with_table(search_filter, pagination, db, table_name)`
@@ -266,6 +307,102 @@ All standard operations have `_with_table` variants:
 - `list_where_with_table(filter, sort, pagination, db, table_name)`
 - `delete_where_with_table(filter, db, table_name)`
 - `aggregate_with_table(function, column, filter, db, table_name)`
+
+**Utility Operations (New!):**
+
+- `exists_with_table(db, table_name)` - Check if any records exist
+- `exists_filter_with_table(filter, db, table_name)` - Check if filtered records exist
+- `find_latest_filter_with_table(filter, db, table_name)` - Find latest record matching filter
+- `find_first_filter_with_table(filter, db, table_name)` - Find oldest record matching filter
+- `find_by_field_with_table(field, value, db, table_name)` - Find records by any field
+- `find_latest_by_field_with_table(field, value, db, table_name)` - Find latest record by field
+- `find_first_by_field_with_table(field, value, db, table_name)` - Find oldest record by field
+- `find_by_ids_with_table(ids, db, table_name)` - Batch find by multiple IDs
+- `find_by_field_in_with_table(field, values, db, table_name)` - Find by multiple field values
+
+## Utility Operations in Action
+
+These new utility methods make common database patterns much simpler:
+
+### Before vs After
+
+**Finding Latest Record by Field (Your Use Case):**
+
+```rust
+// Before: Manual filter construction
+let filter = filter_op!(filter!("pair", orso::Operator::Eq, "BTCUSDT"));
+let record = TableIndicatorsRegime::find_latest_filter_with_table(filter, &db, &table_name).await?;
+
+// After: Direct field query
+let record = TableIndicatorsRegime::find_latest_by_field_with_table(
+    "pair",
+    Value::Text("BTCUSDT".to_string()),
+    &db,
+    &table_name
+).await?;
+```
+
+**Checking if Data Exists:**
+
+```rust
+// Before: Fetch and check length
+let users = User::find_all(&db).await?;
+let exists = !users.is_empty();
+
+// After: Efficient existence check
+let exists = User::exists(&db).await?;
+```
+
+**Batch Finding by IDs:**
+
+```rust
+// Before: Multiple individual queries
+let mut users = Vec::new();
+for id in ["id1", "id2", "id3"] {
+    if let Some(user) = User::find_by_id(id, &db).await? {
+        users.push(user);
+    }
+}
+
+// After: Single batch query
+let users = User::find_by_ids(&["id1", "id2", "id3"], &db).await?;
+```
+
+### Real-World Use Cases
+
+**Financial Data Processing:**
+
+```rust
+// Check if we have today's data
+let today_filter = filter_op!(filter!("date", orso::Operator::Eq, today));
+let has_todays_data = PriceData::exists_filter(&today_filter, &db).await?;
+
+// Get latest price for each symbol
+let symbols = vec!["BTCUSDT", "ETHUSDT", "ADAUSDT"];
+for symbol in symbols {
+    let latest_price = PriceData::find_latest_by_field(
+        "symbol",
+        Value::Text(symbol.to_string()),
+        &db
+    ).await?;
+    println!("{}: {:?}", symbol, latest_price);
+}
+```
+
+**User Management:**
+
+```rust
+// Find all users from specific domains
+let domains = vec![
+    Value::Text("gmail.com".to_string()),
+    Value::Text("company.com".to_string())
+];
+let users = User::find_by_field_in("email_domain", &domains, &db).await?;
+
+// Check if any admin users exist
+let admin_filter = filter_op!(filter!("role", orso::Operator::Eq, "admin"));
+let has_admins = User::exists_filter(&admin_filter, &db).await?;
+```
 
 ## Database Connection Modes
 
@@ -378,11 +515,11 @@ Migrations::init_with_config(&db, &[
 
 ### Migration Configuration Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `max_backups_per_table` | `5` | Maximum number of migration backup tables to keep per original table |
-| `backup_retention_days` | `30` | Delete migration tables older than this many days |
-| `backup_suffix` | `"migration"` | Suffix used in migration table names (e.g., `table_migration_123456`) |
+| Option                  | Default       | Description                                                           |
+| ----------------------- | ------------- | --------------------------------------------------------------------- |
+| `max_backups_per_table` | `5`           | Maximum number of migration backup tables to keep per original table  |
+| `backup_retention_days` | `30`          | Delete migration tables older than this many days                     |
+| `backup_suffix`         | `"migration"` | Suffix used in migration table names (e.g., `table_migration_123456`) |
 
 ### Zero-Loss Migration Process
 
@@ -429,7 +566,7 @@ use orso::{filter, filter_op};
 
 let filter = filter_op!(filter!("age", crate::Operator::Eq, 25));
 let users = User::find_where(filter, &db).await?;
-````
+```
 
 ### Complex Filtering
 
@@ -487,7 +624,7 @@ let results = query!("users")
 For better performance with multiple records:
 
 ```rust
-// Batch create
+// Batch insert
 let users = vec![user1, user2, user3];
 User::batch_create(&users, &db).await?;
 

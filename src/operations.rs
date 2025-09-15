@@ -1,6 +1,6 @@
 use crate::{
     Aggregate, Database, Error, FilterOperator, PaginatedResult, Pagination, QueryBuilder, Result,
-    SearchFilter, Sort, Utils,
+    SearchFilter, Sort, SortOrder, Utils,
 };
 use std::collections::HashMap;
 use tracing::{debug, info, trace, warn};
@@ -9,15 +9,15 @@ use tracing::{debug, info, trace, warn};
 pub struct CrudOperations;
 
 impl CrudOperations {
-    /// Create a new record in the database
-    pub async fn create<T>(model: &T, db: &Database) -> Result<()>
+    /// Insert a new record in the database
+    pub async fn insert<T>(model: &T, db: &Database) -> Result<()>
     where
         T: crate::Orso,
     {
-        Self::create_with_table(model, db, T::table_name()).await
+        Self::insert_with_table(model, db, T::table_name()).await
     }
-    /// Create a new record in the database
-    pub async fn create_with_table<T>(model: &T, db: &Database, table_name: &str) -> Result<()>
+    /// Insert a new record in the database
+    pub async fn insert_with_table<T>(model: &T, db: &Database, table_name: &str) -> Result<()>
     where
         T: crate::Orso,
     {
@@ -43,15 +43,15 @@ impl CrudOperations {
         Ok(())
     }
 
-    /// Create or update a record based on whether it has a primary key
-    pub async fn create_or_update<T>(model: &T, db: &Database) -> Result<()>
+    /// Insert or update a record based on whether it has a primary key
+    pub async fn insert_or_update<T>(model: &T, db: &Database) -> Result<()>
     where
         T: crate::Orso,
     {
-        Self::create_or_update_with_table(model, db, T::table_name()).await
+        Self::insert_or_update_with_table(model, db, T::table_name()).await
     }
 
-    pub async fn create_or_update_with_table<T>(
+    pub async fn insert_or_update_with_table<T>(
         model: &T,
         db: &Database,
         table_name: &str,
@@ -67,22 +67,22 @@ impl CrudOperations {
                     Self::update_with_table(model, db, table_name).await
                 }
                 None => {
-                    // Record doesn't exist, create it
+                    // Record doesn't exist, insert it
                     warn!(table = table_name, id = %id, "Record with ID not found, creating new record");
-                    Self::create_with_table(model, db, table_name).await
+                    Self::insert_with_table(model, db, table_name).await
                 }
             }
         } else {
-            // No primary key, create new record
+            // No primary key, insert new record
             trace!(
                 table = table_name,
                 "Creating new record (no primary key provided)"
             );
-            Self::create_with_table(model, db, table_name).await
+            Self::insert_with_table(model, db, table_name).await
         }
     }
 
-    /// Create or update a record based on unique constraints
+    /// Insert or update a record based on unique constraints
     pub async fn upsert<T>(model: &T, db: &Database) -> Result<()>
     where
         T: crate::Orso,
@@ -137,24 +137,24 @@ impl CrudOperations {
             info!(table = table_name, "Found existing record, updating");
             Self::update_with_table(model, db, table_name).await
         } else {
-            // Record doesn't exist, create it
+            // Record doesn't exist, insert it
             info!(
                 table = table_name,
                 "No existing record found, creating new one"
             );
-            Self::create_with_table(model, db, table_name).await
+            Self::insert_with_table(model, db, table_name).await
         }
     }
 
-    /// Create multiple records using Turso batch operations for optimal performance
+    /// Insert multiple records using Turso batch operations for optimal performance
     pub async fn batch_create<T>(models: &[T], db: &Database) -> Result<()>
     where
         T: crate::Orso,
     {
-        Self::batch_create_with_table(models, db, T::table_name()).await
+        Self::batch_insert_with_table(models, db, T::table_name()).await
     }
 
-    pub async fn batch_create_with_table<T>(
+    pub async fn batch_insert_with_table<T>(
         models: &[T],
         db: &Database,
         table_name: &str,
@@ -295,6 +295,264 @@ impl CrudOperations {
     where
         T: crate::Orso,
     {
+        let builder = QueryBuilder::new(table_name)._where(filter);
+        builder.execute::<T>(db).await
+    }
+
+    pub async fn find_latest<T>(db: &Database) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        Self::find_latest_with_table(db, T::table_name()).await
+    }
+
+    pub async fn find_latest_with_table<T>(db: &Database, table_name: &str) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        let created_at_field = T::created_at_field().unwrap_or("created_at");
+        let sort = Sort::new(created_at_field, SortOrder::Desc);
+        let builder = QueryBuilder::new(table_name).order_by(sort).limit(1);
+
+        let results = builder.execute::<T>(db).await?;
+        Ok(results.into_iter().next())
+    }
+
+    /// Find latest record matching filter
+    pub async fn find_latest_filter<T>(filter: FilterOperator, db: &Database) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        Self::find_latest_filter_with_table(filter, db, T::table_name()).await
+    }
+
+    pub async fn find_latest_filter_with_table<T>(
+        filter: FilterOperator,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        let created_at_field = T::created_at_field().unwrap_or("created_at");
+        let sort = Sort::new(created_at_field, SortOrder::Desc);
+        let builder = QueryBuilder::new(table_name)
+            ._where(filter)
+            .order_by(sort)
+            .limit(1);
+        let results = builder.execute::<T>(db).await?;
+        Ok(results.into_iter().next())
+    }
+
+    /// Find first record matching filter (oldest)
+    pub async fn find_first_filter<T>(filter: FilterOperator, db: &Database) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        Self::find_first_filter_with_table(filter, db, T::table_name()).await
+    }
+
+    pub async fn find_first_filter_with_table<T>(
+        filter: FilterOperator,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        let created_at_field = T::created_at_field().unwrap_or("created_at");
+        let sort = Sort::new(created_at_field, SortOrder::Asc);
+        let builder = QueryBuilder::new(table_name)
+            ._where(filter)
+            .order_by(sort)
+            .limit(1);
+        let results = builder.execute::<T>(db).await?;
+        Ok(results.into_iter().next())
+    }
+
+    /// Check if any record exists
+    pub async fn exists<T>(db: &Database) -> Result<bool>
+    where
+        T: crate::Orso,
+    {
+        Self::exists_with_table::<T>(db, T::table_name()).await
+    }
+
+    pub async fn exists_with_table<T>(db: &Database, table_name: &str) -> Result<bool>
+    where
+        T: crate::Orso,
+    {
+        let builder = QueryBuilder::new(table_name).limit(1);
+        let count = builder.execute_count(db).await?;
+        Ok(count > 0)
+    }
+
+    /// Check if any record exists matching filter
+    pub async fn exists_filter<T>(filter: FilterOperator, db: &Database) -> Result<bool>
+    where
+        T: crate::Orso,
+    {
+        Self::exists_filter_with_table::<T>(filter, db, T::table_name()).await
+    }
+
+    pub async fn exists_filter_with_table<T>(
+        filter: FilterOperator,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<bool>
+    where
+        T: crate::Orso,
+    {
+        let builder = QueryBuilder::new(table_name)._where(filter).limit(1);
+        let count = builder.execute_count(db).await?;
+        Ok(count > 0)
+    }
+
+    /// Find by any field value
+    pub async fn find_by_field<T>(field: &str, value: crate::Value, db: &Database) -> Result<Vec<T>>
+    where
+        T: crate::Orso,
+    {
+        Self::find_by_field_with_table(field, value, db, T::table_name()).await
+    }
+
+    pub async fn find_by_field_with_table<T>(
+        field: &str,
+        value: crate::Value,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Vec<T>>
+    where
+        T: crate::Orso,
+    {
+        let filter =
+            FilterOperator::Single(crate::Filter::new_simple(field, crate::Operator::Eq, value));
+        let builder = QueryBuilder::new(table_name)._where(filter);
+        builder.execute::<T>(db).await
+    }
+
+    /// Find latest record by field value
+    pub async fn find_latest_by_field<T>(
+        field: &str,
+        value: crate::Value,
+        db: &Database,
+    ) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        Self::find_latest_by_field_with_table(field, value, db, T::table_name()).await
+    }
+
+    pub async fn find_latest_by_field_with_table<T>(
+        field: &str,
+        value: crate::Value,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        let filter =
+            FilterOperator::Single(crate::Filter::new_simple(field, crate::Operator::Eq, value));
+        let created_at_field = T::created_at_field().unwrap_or("created_at");
+        let sort = Sort::new(created_at_field, SortOrder::Desc);
+        let builder = QueryBuilder::new(table_name)
+            ._where(filter)
+            .order_by(sort)
+            .limit(1);
+        let results = builder.execute::<T>(db).await?;
+        Ok(results.into_iter().next())
+    }
+
+    /// Find first record by field value (oldest)
+    pub async fn find_first_by_field<T>(
+        field: &str,
+        value: crate::Value,
+        db: &Database,
+    ) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        Self::find_first_by_field_with_table(field, value, db, T::table_name()).await
+    }
+
+    pub async fn find_first_by_field_with_table<T>(
+        field: &str,
+        value: crate::Value,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        let filter =
+            FilterOperator::Single(crate::Filter::new_simple(field, crate::Operator::Eq, value));
+        let created_at_field = T::created_at_field().unwrap_or("created_at");
+        let sort = Sort::new(created_at_field, SortOrder::Asc);
+        let builder = QueryBuilder::new(table_name)
+            ._where(filter)
+            .order_by(sort)
+            .limit(1);
+        let results = builder.execute::<T>(db).await?;
+        Ok(results.into_iter().next())
+    }
+
+    /// Find multiple records by IDs (batch operation)
+    pub async fn find_by_ids<T>(ids: &[&str], db: &Database) -> Result<Vec<T>>
+    where
+        T: crate::Orso,
+    {
+        Self::find_by_ids_with_table(ids, db, T::table_name()).await
+    }
+
+    pub async fn find_by_ids_with_table<T>(
+        ids: &[&str],
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Vec<T>>
+    where
+        T: crate::Orso,
+    {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let id_values: Vec<crate::Value> = ids
+            .iter()
+            .map(|id| crate::Value::Text(id.to_string()))
+            .collect();
+        let pk_field = T::primary_key_field();
+        let filter = FilterOperator::Single(crate::Filter::in_values(pk_field, id_values));
+        let builder = QueryBuilder::new(table_name)._where(filter);
+        builder.execute::<T>(db).await
+    }
+
+    /// Find records by multiple values for same field (IN clause)
+    pub async fn find_by_field_in<T>(
+        field: &str,
+        values: &[crate::Value],
+        db: &Database,
+    ) -> Result<Vec<T>>
+    where
+        T: crate::Orso,
+    {
+        Self::find_by_field_in_with_table(field, values, db, T::table_name()).await
+    }
+
+    pub async fn find_by_field_in_with_table<T>(
+        field: &str,
+        values: &[crate::Value],
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Vec<T>>
+    where
+        T: crate::Orso,
+    {
+        if values.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let filter = FilterOperator::Single(crate::Filter::in_values(field, values.to_vec()));
         let builder = QueryBuilder::new(table_name)._where(filter);
         builder.execute::<T>(db).await
     }

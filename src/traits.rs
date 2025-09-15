@@ -52,11 +52,11 @@ pub trait Orso: Serialize + DeserializeOwned + Send + Sync + Clone {
     fn to_map(&self) -> Result<HashMap<String, crate::Value>>;
     fn from_map(map: HashMap<String, crate::Value>) -> Result<Self>;
 
-    async fn create(&self, db: &Database) -> Result<()> {
-        crate::operations::CrudOperations::create(self, db).await
+    async fn insert(&self, db: &Database) -> Result<()> {
+        crate::operations::CrudOperations::insert(self, db).await
     }
-    async fn create_with_table(&self, db: &Database, table_name: &str) -> Result<()> {
-        crate::operations::CrudOperations::create_with_table(self, db, table_name).await
+    async fn insert_with_table(&self, db: &Database, table_name: &str) -> Result<()> {
+        crate::operations::CrudOperations::insert_with_table(self, db, table_name).await
     }
 
     async fn find_by_id(id: &str, db: &Database) -> Result<Option<Self>> {
@@ -117,12 +117,12 @@ pub trait Orso: Serialize + DeserializeOwned + Send + Sync + Clone {
     }
 
     // Advanced CRUD operations
-    async fn create_or_update(&self, db: &Database) -> Result<()> {
-        crate::operations::CrudOperations::create_or_update(self, db).await
+    async fn insert_or_update(&self, db: &Database) -> Result<()> {
+        crate::operations::CrudOperations::insert_or_update(self, db).await
     }
 
-    async fn create_or_update_with_table(&self, db: &Database, table_name: &str) -> Result<()> {
-        crate::operations::CrudOperations::create_or_update_with_table(self, db, table_name).await
+    async fn insert_or_update_with_table(&self, db: &Database, table_name: &str) -> Result<()> {
+        crate::operations::CrudOperations::insert_or_update_with_table(self, db, table_name).await
     }
 
     async fn upsert(&self, db: &Database) -> Result<()> {
@@ -138,12 +138,12 @@ pub trait Orso: Serialize + DeserializeOwned + Send + Sync + Clone {
         crate::operations::CrudOperations::batch_create(models, db).await
     }
 
-    async fn batch_create_with_table(
+    async fn batch_insert_with_table(
         models: &[Self],
         db: &Database,
         table_name: &str,
     ) -> Result<()> {
-        crate::operations::CrudOperations::batch_create_with_table(models, db, table_name).await
+        crate::operations::CrudOperations::batch_insert_with_table(models, db, table_name).await
     }
 
     async fn batch_update(models: &[Self], db: &Database) -> Result<()> {
@@ -190,6 +190,159 @@ pub trait Orso: Serialize + DeserializeOwned + Send + Sync + Clone {
         table_name: &str,
     ) -> Result<Option<Self>> {
         crate::operations::CrudOperations::find_one_with_table::<Self>(filter, db, table_name).await
+    }
+
+    async fn find_latest<T>(db: &Database) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        Self::find_latest_with_table(db, T::table_name()).await
+    }
+
+    async fn find_latest_with_table<T>(db: &Database, table_name: &str) -> Result<Option<T>>
+    where
+        T: crate::Orso,
+    {
+        crate::operations::CrudOperations::find_latest_with_table::<T>(db, table_name).await
+    }
+
+    async fn find_latest_filter(filter: FilterOperator, db: &Database) -> Result<Option<Self>> {
+        crate::operations::CrudOperations::find_latest_filter::<Self>(filter, db).await
+    }
+
+    async fn find_latest_filter_with_table(
+        filter: FilterOperator,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Option<Self>> {
+        crate::operations::CrudOperations::find_latest_filter_with_table::<Self>(
+            filter, db, table_name,
+        )
+        .await
+    }
+
+    async fn find_first_filter(filter: FilterOperator, db: &Database) -> Result<Option<Self>> {
+        crate::operations::CrudOperations::find_first_filter::<Self>(filter, db).await
+    }
+
+    async fn find_first_filter_with_table(
+        filter: FilterOperator,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Option<Self>> {
+        crate::operations::CrudOperations::find_first_filter_with_table::<Self>(
+            filter, db, table_name,
+        )
+        .await
+    }
+
+    async fn exists(db: &Database) -> Result<bool> {
+        crate::operations::CrudOperations::exists::<Self>(db).await
+    }
+
+    async fn exists_with_table(db: &Database, table_name: &str) -> Result<bool> {
+        crate::operations::CrudOperations::exists_with_table::<Self>(db, table_name).await
+    }
+
+    async fn exists_filter(filter: FilterOperator, db: &Database) -> Result<bool> {
+        crate::operations::CrudOperations::exists_filter::<Self>(filter, db).await
+    }
+
+    async fn exists_filter_with_table(
+        filter: FilterOperator,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<bool> {
+        crate::operations::CrudOperations::exists_filter_with_table::<Self>(filter, db, table_name)
+            .await
+    }
+
+    async fn find_by_field(field: &str, value: crate::Value, db: &Database) -> Result<Vec<Self>> {
+        crate::operations::CrudOperations::find_by_field::<Self>(field, value, db).await
+    }
+
+    async fn find_by_field_with_table(
+        field: &str,
+        value: crate::Value,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Vec<Self>> {
+        crate::operations::CrudOperations::find_by_field_with_table::<Self>(
+            field, value, db, table_name,
+        )
+        .await
+    }
+
+    async fn find_latest_by_field(
+        field: &str,
+        value: crate::Value,
+        db: &Database,
+    ) -> Result<Option<Self>> {
+        crate::operations::CrudOperations::find_latest_by_field::<Self>(field, value, db).await
+    }
+
+    async fn find_latest_by_field_with_table(
+        field: &str,
+        value: crate::Value,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Option<Self>> {
+        crate::operations::CrudOperations::find_latest_by_field_with_table::<Self>(
+            field, value, db, table_name,
+        )
+        .await
+    }
+
+    async fn find_first_by_field(
+        field: &str,
+        value: crate::Value,
+        db: &Database,
+    ) -> Result<Option<Self>> {
+        crate::operations::CrudOperations::find_first_by_field::<Self>(field, value, db).await
+    }
+
+    async fn find_first_by_field_with_table(
+        field: &str,
+        value: crate::Value,
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Option<Self>> {
+        crate::operations::CrudOperations::find_first_by_field_with_table::<Self>(
+            field, value, db, table_name,
+        )
+        .await
+    }
+
+    async fn find_by_ids(ids: &[&str], db: &Database) -> Result<Vec<Self>> {
+        crate::operations::CrudOperations::find_by_ids::<Self>(ids, db).await
+    }
+
+    async fn find_by_ids_with_table(
+        ids: &[&str],
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Vec<Self>> {
+        crate::operations::CrudOperations::find_by_ids_with_table::<Self>(ids, db, table_name).await
+    }
+
+    async fn find_by_field_in(
+        field: &str,
+        values: &[crate::Value],
+        db: &Database,
+    ) -> Result<Vec<Self>> {
+        crate::operations::CrudOperations::find_by_field_in::<Self>(field, values, db).await
+    }
+
+    async fn find_by_field_in_with_table(
+        field: &str,
+        values: &[crate::Value],
+        db: &Database,
+        table_name: &str,
+    ) -> Result<Vec<Self>> {
+        crate::operations::CrudOperations::find_by_field_in_with_table::<Self>(
+            field, values, db, table_name,
+        )
+        .await
     }
 
     async fn find_paginated(

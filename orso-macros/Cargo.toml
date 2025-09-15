@@ -2,9 +2,11 @@
 name = "orso-macros"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
-description = "Procedural macros for ORSO ORM"
+authors = ["https://github.com/tia-lab"]
+description = "ORSO procedural macros"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/tia-lab/orso"
+homepage = "https://github.com/tia-lab/orso"
 
 [lib]
 proc-macro = true
@@ -12,4 +14,10 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"
-syn = { version = "2.0", features = ["full", "extra-traits"] }
+syn = { version = "2.0", features = ["full"] }
+
+[dev-dependencies]
+orso = { path = ".." }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
