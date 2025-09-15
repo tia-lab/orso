@@ -8,12 +8,17 @@ description = "Create git tags and publish to crates.io"
 command = "release-plz"
 args = ["release"]
 
-[tasks.r-full]
-description = "Complete release workflow: update, commit, and release"
-dependencies = ["r-update"]
-script = ["git add .", "git commit -m 'chore: release'", "release-plz release"]
-
 [tasks.r-check]
 description = "Check what release-plz would update (dry run)"
 command = "release-plz"
 args = ["update", "--dry-run"]
+
+[tasks.r-full]
+description = "Complete release workflow: update, commit, push, and release"
+dependencies = ["r-update"]
+script = [
+  "git add .",
+  "git commit -m 'chore: release'",
+  "git push",
+  "release-plz release",
+]
