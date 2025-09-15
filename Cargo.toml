@@ -1,34 +1,14 @@
-[package]
-name = "orso"
-description = "ORSO - A ORm for turSO and SQLite with zero-loss migrations"
+[workspace]
+members = ["orso", "orso-macros"]
+resolver = "2"
+
+[workspace.package]
 version = "0.0.1"
 edition = "2021"
 authors = ["https://github.com/tia-lab"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tia-lab/orso"
 homepage = "https://github.com/tia-lab/orso"
-documentation = "https://docs.rs/orso"
-keywords = ["orm", "database", "sqlite", "turso", "async"]
-categories = ["database"]
-readme = "README.md"
 
-[dependencies]
-orso-macros = { path = "./orso-macros", version = "0.0.1" }
-libsql = "0.9.14"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-dotenv = "0.15"
-thiserror = "1.0"
-tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
-chrono = { version = "0.4", features = ["serde"] }
-tracing = "0.1"
-anyhow = "1.0"
-uuid = { version = "1.0", features = ["v4", "serde"] }
-async-trait = "0.1"
-
-[dev-dependencies]
-tracing-test = "0.2"
-
-[lib]
-name = "orso"
-path = "src/lib.rs"
+[workspace.dependencies]
+orso-macros = { path = "./orso-macros" }

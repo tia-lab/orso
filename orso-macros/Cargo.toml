@@ -1,12 +1,12 @@
 [package]
 name = "orso-macros"
-version = "0.0.1"
-edition = "2021"
-authors = ["https://github.com/tia-lab"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "ORSO procedural macros"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/tia-lab/orso"
-homepage = "https://github.com/tia-lab/orso"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [lib]
 proc-macro = true
@@ -17,7 +17,6 @@ quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
 
 [dev-dependencies]
-orso = { path = ".." }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
