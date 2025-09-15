@@ -5,8 +5,7 @@ script = ["release-plz release-pr --git-token $(gh auth token)"]
 
 [tasks.r-release]
 description = "Publish to crates.io and create GitHub release (after PR merged)"
-command = "release-plz"
-args = ["release"]
+script = ["release-plz release --git-token $(gh auth token)"]
 
 [tasks.r-check]
 description = "See what would be updated (dry run)"
@@ -25,7 +24,7 @@ script = [
   "git add .",
   "git commit -m 'chore: release'",
   "git push",
-  "release-plz release",
+  "release-plz release --git-token $(gh auth token)",
 ]
 
 [tasks.r-full-pr]
