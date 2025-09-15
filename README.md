@@ -20,9 +20,13 @@ ORSO is a Rust ORM (Object-Relational Mapping) library for working with SQLite a
 
 Add ORSO to your `Cargo.toml`:
 
+```bash
+cargo add orso
+```
+
 ```toml
 [dependencies]
-orso = "0.1.0"
+orso = "version"
 tokio = { version = "1.0", features = ["full"] }
 ```
 

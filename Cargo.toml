@@ -1,7 +1,7 @@
 [package]
 name = "orso"
 description = "ORSO - A ORm for turSO and SQLite with zero-loss migrations"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 authors = ["https://github.com/tia-lab"]
 license = "MIT OR Apache-2.0"
@@ -13,7 +13,7 @@ categories = ["database"]
 readme = "README.md"
 
 [dependencies]
-orso-macros = { path = "./orso-macros", version = "0.1.0" }
+orso-macros = { path = "./orso-macros" }
 libsql = "0.9.14"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -32,3 +32,19 @@ tracing-test = "0.2"
 [lib]
 name = "orso"
 path = "src/lib.rs"
+
+[workspace.metadata.release]
+pre-release-hook = [
+  "sh",
+  "-c",
+  "gh release create v{{version}} --generate-notes",
+]
+shared-version = true
+tag-message = "Release ORSO {{version}}"
+pre-release-commit-message = "chore: release {{version}}"
+post-release-commit-message = "chore: bump development version"
+publish = true
+sign-commit = false
+sign-tag = false
+push = true
+allow-branch = ["main"]
