@@ -24,12 +24,6 @@ Add ORSO to your `Cargo.toml`:
 cargo add orso
 ```
 
-```toml
-[dependencies]
-orso = "version"
-tokio = { version = "1.0", features = ["full"] }
-```
-
 ## Quick Start
 
 ### 1. Define Your Model
