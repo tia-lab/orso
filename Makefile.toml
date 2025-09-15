@@ -1,4 +1,7 @@
 
+[config]
+default_to_workspace = false
+
 [tasks.r-pr]
 description = "Create release PR with version bumps and changelog"
 script = ["release-plz release-pr --git-token $(gh auth token)"]
