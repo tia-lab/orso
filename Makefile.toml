@@ -1,0 +1,19 @@
+[tasks.r-update]
+description = "Update versions and changelog for release"
+command = "release-plz"
+args = ["update"]
+
+[tasks.r-release]
+description = "Create git tags and publish to crates.io"
+command = "release-plz"
+args = ["release"]
+
+[tasks.r-full]
+description = "Complete release workflow: update, commit, and release"
+dependencies = ["r-update"]
+script = ["git add .", "git commit -m 'chore: release'", "release-plz release"]
+
+[tasks.r-check]
+description = "Check what release-plz would update (dry run)"
+command = "release-plz"
+args = ["update", "--dry-run"]

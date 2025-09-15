@@ -32,19 +32,3 @@ tracing-test = "0.2"
 [lib]
 name = "orso"
 path = "src/lib.rs"
-
-[workspace.metadata.release]
-pre-release-hook = [
-  "sh",
-  "-c",
-  "gh release create v{{version}} --generate-notes",
-]
-shared-version = true
-tag-message = "Release ORSO {{version}}"
-pre-release-commit-message = "chore: release {{version}}"
-post-release-commit-message = "chore: bump development version"
-publish = true
-sign-commit = false
-sign-tag = false
-push = true
-allow-branch = ["main"]
