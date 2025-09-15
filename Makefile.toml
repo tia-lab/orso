@@ -1,8 +1,7 @@
 
 [tasks.r-pr]
 description = "Create release PR with version bumps and changelog"
-command = "release-plz"
-args = ["release-pr"]
+script = ["release-plz release-pr --git-token $(gh auth token)"]
 
 [tasks.r-release]
 description = "Publish to crates.io and create GitHub release (after PR merged)"
@@ -33,7 +32,7 @@ script = [
 description = "Complete PR workflow: create PR, wait for merge confirmation, then release"
 script = [
   "echo 'Creating release PR...'",
-  "release-plz release-pr",
+  "release-plz release-pr --git-token $(gh auth token)",
   "echo 'Release PR created! Please review and merge it on GitHub.'",
   "echo 'After merging, run: cargo make r-release'",
   "echo 'Or run: cargo make r-release-auto (if you want to release immediately after merge)'",
