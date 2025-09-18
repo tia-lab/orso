@@ -1,0 +1,2 @@
+☐ Add cascade support for delete operation
+☐  Add automatic lookup for upsert operation of the primary key

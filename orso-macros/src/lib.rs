@@ -429,7 +429,7 @@ fn parse_orso_column_attr(
 
     // Add defaults for timestamp columns
     if is_created_at || is_updated_at {
-        column_def.push_str(" DEFAULT (datetime('now'))");
+        column_def.push_str(" DEFAULT (strftime('%Y-%m-%dT%H:%M:%S.000Z', 'now'))");
     }
 
     column_def

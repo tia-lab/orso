@@ -719,7 +719,7 @@ impl CrudOperations {
             if k != pk_field {
                 // For updated_at fields, use database function instead of model value
                 if updated_at_field.is_some() && k == updated_at_field.unwrap() {
-                    set_clauses.push(format!("{k} = datetime('now')"));
+                    set_clauses.push(format!("{k} = strftime('%Y-%m-%dT%H:%M:%S.000Z', 'now')"));
                 } else {
                     set_clauses.push(format!("{k} = ?"));
                 }
@@ -788,7 +788,7 @@ impl CrudOperations {
                 .map(|k| {
                     // For updated_at fields, use database function instead of model value
                     if updated_at_field.is_some() && k == updated_at_field.unwrap() {
-                        format!("{} = datetime('now')", k)
+                        format!("{} = strftime('%Y-%m-%dT%H:%M:%S.000Z', 'now')", k)
                     } else {
                         let value = map.get(k).unwrap();
                         let sql_value = match value {
@@ -949,7 +949,7 @@ impl CrudOperations {
                 .map(|col| {
                     // For updated_at fields, use database function instead of excluded value
                     if updated_at_field.is_some() && col == updated_at_field.unwrap() {
-                        format!("{} = datetime('now')", col)
+                        format!("{} = strftime('%Y-%m-%dT%H:%M:%S.000Z', 'now')", col)
                     } else {
                         format!("{} = excluded.{}", col, col)
                     }
