@@ -135,6 +135,10 @@ pub struct ColumnInfo {
     pub sql_type: String,
     pub nullable: bool,
     pub position: i32,
+    pub is_unique: bool,
+    pub is_primary_key: bool,
+    pub foreign_key_reference: Option<String>,
+    pub has_default: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -272,6 +276,9 @@ where
     let field_names = T::field_names();
     let field_types = T::field_types();
     let field_nullable = T::field_nullable();
+    let field_compressed = T::field_compressed();
+    let unique_fields = T::unique_fields();
+    let primary_key_field = T::primary_key_field();
 
     if field_names.len() != field_types.len() || field_names.len() != field_nullable.len() {
         return Err(Error::DatabaseError(
@@ -279,17 +286,35 @@ where
         ));
     }
 
-    for (i, ((name, field_type), nullable)) in field_names
+    for (i, (((name, field_type), nullable), compressed)) in field_names
         .iter()
         .zip(field_types.iter())
         .zip(field_nullable.iter())
+        .zip(field_compressed.iter())
         .enumerate()
     {
+        // Determine if this field should be unique
+        let is_unique = unique_fields.contains(name);
+        
+        // Determine if this is the primary key
+        let is_primary_key = *name == primary_key_field;
+        
+        // For compressed fields, we use BLOB type
+        let sql_type = if *compressed {
+            "BLOB".to_string()
+        } else {
+            field_type_to_sqlite_type(field_type)
+        };
+
         columns.push(ColumnInfo {
             name: name.to_string(),
-            sql_type: field_type_to_sqlite_type(field_type),
+            sql_type,
             nullable: *nullable,
             position: i as i32,
+            is_unique,
+            is_primary_key,
+            foreign_key_reference: None, // Would need to add this to Orso trait
+            has_default: false, // Would depend on field type and attributes
         });
     }
 
@@ -334,6 +359,7 @@ async fn get_current_table_schema(
     db: &Database,
     table_name: &str,
 ) -> Result<Vec<ColumnInfo>, Error> {
+    // First get basic column info
     let query = format!("PRAGMA table_info({})", table_name);
 
     let mut rows = db
@@ -343,6 +369,7 @@ async fn get_current_table_schema(
         .map_err(|e| Error::DatabaseError(format!("Failed to get table info: {}", e)))?;
 
     let mut columns = Vec::new();
+    let mut column_info_map = std::collections::HashMap::new();
 
     while let Some(row) = rows
         .next()
@@ -361,17 +388,110 @@ async fn get_current_table_schema(
         let not_null: i32 = row
             .get(3)
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        let default_value: Option<String> = row
+            .get(4)
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        let pk: i32 = row
+            .get(5)
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
-        columns.push(ColumnInfo {
-            name,
+        let column_info = ColumnInfo {
+            name: name.clone(),
             sql_type: type_name.to_uppercase(),
             nullable: not_null == 0,
             position: cid,
-        });
+            is_unique: false, // Will be updated later
+            is_primary_key: pk != 0,
+            foreign_key_reference: None, // Will be updated later
+            has_default: default_value.is_some(),
+        };
+
+        column_info_map.insert(name.clone(), column_info.clone());
+        columns.push(column_info);
     }
 
     // Sort by position to maintain order
     columns.sort_by_key(|c| c.position);
+
+    // Get index information to determine unique constraints
+    let index_query = format!("PRAGMA index_list({})", table_name);
+    let mut index_rows = db
+        .conn
+        .query(&index_query, ())
+        .await
+        .map_err(|e| Error::DatabaseError(format!("Failed to get index list: {}", e)))?;
+
+    while let Some(row) = index_rows
+        .next()
+        .await
+        .map_err(|e| Error::DatabaseError(e.to_string()))?
+    {
+        let index_name: String = row
+            .get(1)
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        let is_unique_index: i32 = row
+            .get(2)
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
+
+        if is_unique_index != 0 {
+            // Get column names for this unique index
+            let index_info_query = format!("PRAGMA index_info({})", index_name);
+            let mut index_info_rows = db
+                .conn
+                .query(&index_info_query, ())
+                .await
+                .map_err(|e| Error::DatabaseError(format!("Failed to get index info: {}", e)))?;
+
+            while let Some(info_row) = index_info_rows
+                .next()
+                .await
+                .map_err(|e| Error::DatabaseError(e.to_string()))?
+            {
+                let column_name: String = info_row
+                    .get(2)
+                    .map_err(|e| Error::DatabaseError(e.to_string()))?;
+
+                // Mark this column as unique
+                if let Some(column_info) = column_info_map.get_mut(&column_name) {
+                    column_info.is_unique = true;
+                }
+            }
+        }
+    }
+
+    // Get foreign key information
+    let fk_query = format!("PRAGMA foreign_key_list({})", table_name);
+    let mut fk_rows = db
+        .conn
+        .query(&fk_query, ())
+        .await
+        .map_err(|e| Error::DatabaseError(format!("Failed to get foreign key list: {}", e)))?;
+
+    while let Some(row) = fk_rows
+        .next()
+        .await
+        .map_err(|e| Error::DatabaseError(e.to_string()))?
+    {
+        let column_name: String = row
+            .get(3)
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        let ref_table: String = row
+            .get(2)
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
+
+        // Mark this column as having a foreign key reference
+        if let Some(column_info) = column_info_map.get_mut(&column_name) {
+            column_info.foreign_key_reference = Some(ref_table);
+        }
+    }
+
+    // Update the columns vector with the enhanced information
+    for column in &mut columns {
+        if let Some(updated_info) = column_info_map.get(&column.name) {
+            column.is_unique = updated_info.is_unique;
+            column.foreign_key_reference = updated_info.foreign_key_reference.clone();
+        }
+    }
 
     Ok(columns)
 }
@@ -421,6 +541,22 @@ fn compare_schemas(current: &[ColumnInfo], expected: &[ColumnInfo]) -> SchemaCom
                     ));
                     needs_migration = true;
                 }
+                if current_col.is_unique != expected_col.is_unique {
+                    changes.push(format!(
+                        "Unique constraint mismatch for {}: {} vs {}",
+                        expected_col.name, current_col.is_unique, expected_col.is_unique
+                    ));
+                    needs_migration = true;
+                }
+                if current_col.is_primary_key != expected_col.is_primary_key {
+                    changes.push(format!(
+                        "Primary key mismatch for {}: {} vs {}",
+                        expected_col.name, current_col.is_primary_key, expected_col.is_primary_key
+                    ));
+                    needs_migration = true;
+                }
+                // Note: We're not checking foreign key references here as they require
+                // additional Orso trait methods that we haven't added yet
             }
             None => {
                 changes.push(format!("Missing column: {}", expected_col.name));
@@ -529,6 +665,7 @@ async fn perform_zero_loss_migration(
 
 fn generate_create_table_sql(table_name: &str, columns: &[ColumnInfo]) -> String {
     let mut column_defs = Vec::new();
+    let mut table_constraints = Vec::new();
 
     for column in columns {
         let mut def = format!("\"{}\" {}", column.name, column.sql_type);
@@ -537,10 +674,25 @@ fn generate_create_table_sql(table_name: &str, columns: &[ColumnInfo]) -> String
             def.push_str(" NOT NULL");
         }
 
+        // Add unique constraints
+        if column.is_unique {
+            // For unique constraints, we add them as table-level constraints
+            // to avoid issues with column-level unique constraints in some cases
+            table_constraints.push(format!("UNIQUE (\"{}\")", column.name));
+        }
+
+        // Add primary key constraints
+        if column.is_primary_key {
+            def.push_str(" PRIMARY KEY");
+        }
+
         // Column defaults are now handled by the macro's column definition
 
         column_defs.push(def);
     }
+
+    // Add table-level constraints
+    column_defs.extend(table_constraints);
 
     format!(
         "CREATE TABLE IF NOT EXISTS \"{}\" (\n  {}\n)",

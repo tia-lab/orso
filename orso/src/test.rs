@@ -514,4 +514,144 @@ mod tests {
 
         Ok(())
     }
+
+    // Migration detection tests
+    #[tokio::test]
+    async fn test_migration_constraint_detection() -> Result<(), Box<dyn std::error::Error>> {
+        // Create in-memory database
+        let config = DatabaseConfig::memory();
+        let db = Database::init(config).await?;
+
+        // First, create a table without unique constraints
+        #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+        #[orso_table("migration_test")]
+        struct MigrationTestInitial {
+            #[orso_column(primary_key)]
+            id: Option<String>,
+            name: String,
+            email: String, // No unique constraint initially
+            age: i32,
+        }
+
+        // Run initial migration
+        use orso::{Migrations, migration};
+        Migrations::init(&db, &[migration!(MigrationTestInitial)]).await?;
+
+        // Now, create a new version with a unique constraint
+        #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+        #[orso_table("migration_test")]
+        struct MigrationTestWithUnique {
+            #[orso_column(primary_key)]
+            id: Option<String>,
+            name: String,
+            #[orso_column(unique)] // Added unique constraint
+            email: String,
+            age: i32,
+        }
+
+        // Run migration again - this should detect the constraint change
+        let results = Migrations::init(&db, &[migration!(MigrationTestWithUnique)]).await?;
+        
+        // The migration should have detected changes and performed a migration
+        assert!(!results.is_empty());
+        match &results[0].action {
+            orso::migrations::MigrationAction::DataMigrated { .. } => {
+                // Migration was performed as expected
+            },
+            _ => {
+                panic!("Expected DataMigrated action, got {:?}", results[0].action);
+            }
+        }
+
+        // Test that the unique constraint is now enforced
+        let user1 = MigrationTestWithUnique {
+            id: None,
+            name: "John Doe".to_string(),
+            email: "john@example.com".to_string(),
+            age: 30,
+        };
+
+        user1.insert(&db).await?;
+
+        // Try to insert another user with the same email (should fail)
+        let user2 = MigrationTestWithUnique {
+            id: None,
+            name: "Jane Doe".to_string(),
+            email: "john@example.com".to_string(), // Same email
+            age: 25,
+        };
+
+        let result = user2.insert(&db).await;
+        assert!(result.is_err(), "Unique constraint should be enforced after migration");
+
+        Ok(())
+    }
+
+    // Migration compression detection tests
+    #[tokio::test]
+    async fn test_migration_compression_detection() -> Result<(), Box<dyn std::error::Error>> {
+        // Create in-memory database
+        let config = DatabaseConfig::memory();
+        let db = Database::init(config).await?;
+
+        // First, create a table without compression
+        #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+        #[orso_table("compression_migration_test")]
+        struct CompressionTestInitial {
+            #[orso_column(primary_key)]
+            id: Option<String>,
+            name: String,
+            data_points: Vec<i64>, // No compression initially
+            age: i32,
+        }
+
+        // Run initial migration
+        use orso::{Migrations, migration};
+        Migrations::init(&db, &[migration!(CompressionTestInitial)]).await?;
+
+        // Insert some test data
+        let initial_data = CompressionTestInitial {
+            id: None,
+            name: "Test User".to_string(),
+            data_points: (0..100).map(|i| i as i64).collect(),
+            age: 25,
+        };
+
+        initial_data.insert(&db).await?;
+
+        // Now, create a new version with compression
+        #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+        #[orso_table("compression_migration_test")]
+        struct CompressionTestWithCompression {
+            #[orso_column(primary_key)]
+            id: Option<String>,
+            name: String,
+            #[orso_column(compress)] // Added compression
+            data_points: Vec<i64>,
+            age: i32,
+        }
+
+        // Run migration again - this should detect the compression change
+        let results = Migrations::init(&db, &[migration!(CompressionTestWithCompression)]).await?;
+        
+        // The migration should have detected changes and performed a migration
+        assert!(!results.is_empty());
+        match &results[0].action {
+            orso::migrations::MigrationAction::DataMigrated { .. } => {
+                // Migration was performed as expected
+            },
+            _ => {
+                panic!("Expected DataMigrated action, got {:?}", results[0].action);
+            }
+        }
+
+        // Verify that we can still retrieve the data correctly
+        let all_records = CompressionTestWithCompression::find_all(&db).await?;
+        assert_eq!(all_records.len(), 1);
+        assert_eq!(all_records[0].data_points.len(), 100);
+        assert_eq!(all_records[0].data_points[0], 0);
+        assert_eq!(all_records[0].data_points[99], 99);
+
+        Ok(())
+    }
 }
