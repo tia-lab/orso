@@ -4,6 +4,13 @@ use libsql::{Builder, Database as LibsqlDatabase, Rows};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+#[cfg(feature = "sqlite")]
+use rusqlite::Connection as RusqliteConnection;
+#[cfg(feature = "sqlite")]
+use std::sync::Arc;
+#[cfg(feature = "sqlite")]
+use std::sync::Mutex;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     pub mode: TursoMode,
@@ -32,6 +39,16 @@ impl DatabaseConfig {
     }
 
     pub fn local(db_path: impl Into<String>) -> Self {
+        Self {
+            mode: TursoMode::Local,
+            local_db_path: db_path.into(),
+            db_url: String::new(),
+            db_token: String::new(),
+        }
+    }
+
+    #[cfg(feature = "sqlite")]
+    pub fn sqlite(db_path: impl Into<String>) -> Self {
         Self {
             mode: TursoMode::Local,
             local_db_path: db_path.into(),
@@ -91,6 +108,8 @@ pub struct Database {
     pub db: libsql::Database,
     pub conn: libsql::Connection,
     pub mode: TursoMode,
+    #[cfg(feature = "sqlite")]
+    pub sqlite_conn: Option<Arc<Mutex<RusqliteConnection>>>,
 }
 
 impl TursoMode {
@@ -115,7 +134,7 @@ impl Database {
     pub async fn init(config: DatabaseConfig) -> Result<Self> {
         let db = Self::client(config.clone()).await?;
         let conn = db.connect().map_err(|e| Error::Connection(e))?;
-        let mode = config.mode;
+        let mode = config.mode.clone();
 
         // Enable foreign key constraints for SQLite
         conn.execute("PRAGMA foreign_keys = ON", ())
@@ -123,8 +142,24 @@ impl Database {
             .map_err(|e| Error::Connection(e))?;
 
         debug!("Turso database connection established with foreign keys enabled");
-        Ok(Self { db, conn, mode })
+        
+        #[cfg(feature = "sqlite")]
+        let sqlite_conn = if matches!(config.mode, TursoMode::Local) && cfg!(feature = "sqlite") {
+            Some(Arc::new(Mutex::new(RusqliteConnection::open(&config.local_db_path)
+                .map_err(|e| Error::Connection(libsql::Error::ConnectionFailed(e.to_string())))?)))
+        } else {
+            None
+        };
+
+        Ok(Self { 
+            db, 
+            conn, 
+            mode,
+            #[cfg(feature = "sqlite")]
+            sqlite_conn,
+        })
     }
+    
     // Initialize Turso client with ConfigManager integration - uses defaults if not in config.yaml
     async fn client(config: DatabaseConfig) -> Result<LibsqlDatabase, Error> {
         let local_db_path = config.local_db_path;
@@ -175,5 +210,31 @@ impl Database {
 
     pub async fn execute(&self, sql: &str) -> Result<u64, libsql::Error> {
         self.conn.execute(sql, ()).await
+    }
+    
+    // New method for SQLite operations
+    #[cfg(feature = "sqlite")]
+    pub fn sqlite_execute(&self, sql: &str) -> Result<usize, rusqlite::Error> {
+        if let Some(conn) = &self.sqlite_conn {
+            let conn = conn.lock().map_err(|_| rusqlite::Error::ExecuteReturnedResults)?;
+            conn.execute(sql, [])
+        } else {
+            Err(rusqlite::Error::ExecuteReturnedResults)
+        }
+    }
+    
+    #[cfg(feature = "sqlite")]
+    pub fn sqlite_query<T, F>(&self, sql: &str, f: F) -> Result<Vec<T>, rusqlite::Error>
+    where
+        F: FnMut(&rusqlite::Row) -> rusqlite::Result<T>,
+    {
+        if let Some(conn) = &self.sqlite_conn {
+            let conn = conn.lock().map_err(|_| rusqlite::Error::QueryReturnedNoRows)?;
+            let mut stmt = conn.prepare(sql)?;
+            let rows = stmt.query_map([], f)?;
+            rows.collect()
+        } else {
+            Err(rusqlite::Error::QueryReturnedNoRows)
+        }
     }
 }

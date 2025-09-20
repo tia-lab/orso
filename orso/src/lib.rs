@@ -14,6 +14,10 @@ pub mod utils;
 #[cfg(test)]
 mod test;
 
+#[cfg(test)]
+#[cfg(feature = "sqlite")]
+mod test_sqlite;
+
 pub use chrono;
 pub use database::*;
 pub use error::{Error, Result};
