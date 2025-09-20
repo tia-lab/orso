@@ -139,6 +139,7 @@ pub struct ColumnInfo {
     pub is_primary_key: bool,
     pub foreign_key_reference: Option<String>,
     pub has_default: bool,
+    pub is_compressed: bool, // Track if this column should be compressed
 }
 
 #[derive(Debug, Clone)]
@@ -315,6 +316,7 @@ where
             is_primary_key,
             foreign_key_reference: None, // Would need to add this to Orso trait
             has_default: false, // Would depend on field type and attributes
+            is_compressed: *compressed, // Track compression status
         });
     }
 
@@ -404,6 +406,7 @@ async fn get_current_table_schema(
             is_primary_key: pk != 0,
             foreign_key_reference: None, // Will be updated later
             has_default: default_value.is_some(),
+            is_compressed: type_name.to_uppercase() == "BLOB", // Heuristic: BLOB columns are probably compressed
         };
 
         column_info_map.insert(name.clone(), column_info.clone());
@@ -552,6 +555,13 @@ fn compare_schemas(current: &[ColumnInfo], expected: &[ColumnInfo]) -> SchemaCom
                     changes.push(format!(
                         "Primary key mismatch for {}: {} vs {}",
                         expected_col.name, current_col.is_primary_key, expected_col.is_primary_key
+                    ));
+                    needs_migration = true;
+                }
+                if current_col.is_compressed != expected_col.is_compressed {
+                    changes.push(format!(
+                        "Compression mismatch for {}: {} vs {}",
+                        expected_col.name, current_col.is_compressed, expected_col.is_compressed
                     ));
                     needs_migration = true;
                 }
