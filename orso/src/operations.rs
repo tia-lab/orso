@@ -166,38 +166,22 @@ impl CrudOperations {
             return Ok(());
         }
 
-        let mut stmts = Vec::new();
-        stmts.push("BEGIN".to_string());
-
+        // Use proper parameterized queries instead of building SQL strings
         for model in models {
             let map = model.to_map()?;
             let columns: Vec<String> = map.keys().cloned().collect();
-            let values: Vec<String> = map
-                .values()
-                .map(|v| match v {
-                    crate::Value::Text(s) => format!("'{}'", s.replace("'", "''")),
-                    crate::Value::Integer(i) => i.to_string(),
-                    crate::Value::Real(f) => f.to_string(),
-                    crate::Value::Boolean(b) => if *b { "1" } else { "0" }.to_string(),
-                    crate::Value::Null => "NULL".to_string(),
-                    crate::Value::Blob(_) => "NULL".to_string(), // Simplified for batch
-                })
-                .collect();
+            let placeholders: Vec<String> = columns.iter().map(|_| "?".to_string()).collect();
+            let params: Vec<libsql::Value> = map.values().map(|v| T::value_to_libsql_value(v)).collect();
 
             let sql = format!(
                 "INSERT INTO {} ({}) VALUES ({})",
                 table_name,
                 columns.join(", "),
-                values.join(", ")
+                placeholders.join(", ")
             );
-            stmts.push(sql);
+
+            db.conn.execute(&sql, params).await?;
         }
-
-        stmts.push("COMMIT".to_string());
-        let batch_sql = stmts.join(";");
-
-        // For batch operations, just execute the batch - no need to return models
-        db.conn.execute_batch(&batch_sql).await?;
         Ok(())
     }
 
@@ -771,9 +755,6 @@ impl CrudOperations {
             return Ok(());
         }
 
-        let mut stmts = Vec::new();
-        stmts.push("BEGIN".to_string());
-
         for model in models {
             let id = model.get_primary_key().ok_or_else(|| {
                 Error::Validation("Cannot batch update record without primary key".to_string())
@@ -782,42 +763,34 @@ impl CrudOperations {
             let map = model.to_map()?;
             let pk_field = T::primary_key_field();
             let updated_at_field = T::updated_at_field();
-            let set_clauses: Vec<String> = map
-                .keys()
-                .filter(|&k| k != pk_field)
-                .map(|k| {
+            
+            let mut set_clauses = Vec::new();
+            let mut params = Vec::new();
+            
+            for (k, v) in &map {
+                if k != pk_field {
                     // For updated_at fields, use database function instead of model value
                     if updated_at_field.is_some() && k == updated_at_field.unwrap() {
-                        format!("{} = strftime('%Y-%m-%dT%H:%M:%S.000Z', 'now')", k)
+                        set_clauses.push(format!("{} = strftime('%Y-%m-%dT%H:%M:%S.000Z', 'now')", k));
                     } else {
-                        let value = map.get(k).unwrap();
-                        let sql_value = match value {
-                            crate::Value::Text(s) => format!("'{}'", s.replace("'", "''")),
-                            crate::Value::Integer(i) => i.to_string(),
-                            crate::Value::Real(f) => f.to_string(),
-                            crate::Value::Boolean(b) => if *b { "1" } else { "0" }.to_string(),
-                            crate::Value::Null => "NULL".to_string(),
-                            crate::Value::Blob(_) => "NULL".to_string(),
-                        };
-                        format!("{} = {}", k, sql_value)
+                        set_clauses.push(format!("{} = ?", k));
+                        params.push(T::value_to_libsql_value(v));
                     }
-                })
-                .collect();
+                }
+            }
+            
+            // Add the ID parameter for the WHERE clause
+            params.push(libsql::Value::Text(id.clone()));
 
             let sql = format!(
-                "UPDATE {} SET {} WHERE {} = '{}'",
+                "UPDATE {} SET {} WHERE {} = ?",
                 table_name,
                 set_clauses.join(", "),
-                pk_field,
-                id.replace("'", "''")
+                pk_field
             );
-            stmts.push(sql);
+
+            db.conn.execute(&sql, params).await?;
         }
-
-        stmts.push("COMMIT".to_string());
-        let batch_sql = stmts.join(";");
-
-        db.conn.execute_batch(&batch_sql).await?;
         Ok(())
     }
 
@@ -919,27 +892,15 @@ impl CrudOperations {
             ));
         }
 
-        let mut stmts = Vec::new();
-        stmts.push("BEGIN".to_string());
-
         for model in models {
             let map = model.to_map()?;
-
+            
             // Build conflict columns for ON CONFLICT clause
             let conflict_columns = unique_columns.join(", ");
 
             let columns: Vec<String> = map.keys().cloned().collect();
-            let values: Vec<String> = map
-                .values()
-                .map(|v| match v {
-                    crate::Value::Text(s) => format!("'{}'", s.replace("'", "''")),
-                    crate::Value::Integer(i) => i.to_string(),
-                    crate::Value::Real(f) => f.to_string(),
-                    crate::Value::Boolean(b) => if *b { "1" } else { "0" }.to_string(),
-                    crate::Value::Null => "NULL".to_string(),
-                    crate::Value::Blob(_) => "NULL".to_string(),
-                })
-                .collect();
+            let placeholders: Vec<String> = columns.iter().map(|_| "?".to_string()).collect();
+            let params: Vec<libsql::Value> = map.values().map(|v| T::value_to_libsql_value(v)).collect();
 
             // Build UPDATE SET clause for conflict resolution
             let updated_at_field = T::updated_at_field();
@@ -962,7 +923,7 @@ impl CrudOperations {
                     "INSERT OR IGNORE INTO {} ({}) VALUES ({})",
                     table_name,
                     columns.join(", "),
-                    values.join(", ")
+                    placeholders.join(", ")
                 )
             } else {
                 // Use INSERT ... ON CONFLICT DO UPDATE for proper upsert
@@ -970,19 +931,14 @@ impl CrudOperations {
                     "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO UPDATE SET {}",
                     table_name,
                     columns.join(", "),
-                    values.join(", "),
+                    placeholders.join(", "),
                     conflict_columns,
                     update_sets.join(", ")
                 )
             };
 
-            stmts.push(sql);
+            db.conn.execute(&sql, params).await?;
         }
-
-        stmts.push("COMMIT".to_string());
-        let batch_sql = stmts.join(";");
-
-        db.conn.execute_batch(&batch_sql).await?;
         Ok(())
     }
 
