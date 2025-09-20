@@ -15,12 +15,6 @@ pub mod utils;
 mod test;
 
 #[cfg(test)]
-mod test_id_generation;
-
-#[cfg(test)]
-mod test_migration_detection;
-
-#[cfg(test)]
 #[cfg(feature = "sqlite")]
 mod test_sqlite;
 

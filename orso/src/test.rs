@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate as orso;
-    use orso::{Orso, Database, DatabaseConfig, FilterOperator, Filter, Value, Operator, Sort, SortOrder, Pagination};
+    use crate::{self as orso};
+    use orso::{
+        Database, DatabaseConfig, Filter, FilterOperator, Operator, Orso, Pagination, Sort,
+        SortOrder, Value,
+    };
     use serde::{Deserialize, Serialize};
 
     #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
@@ -9,10 +12,10 @@ mod tests {
     struct TestCompressed {
         #[orso_column(primary_key)]
         id: Option<String>,
-        
+
         #[orso_column(compress)]
         data_points: Vec<i64>,
-        
+
         name: String,
         age: i32,
     }
@@ -22,17 +25,17 @@ mod tests {
     struct TestUser {
         #[orso_column(primary_key)]
         id: Option<String>,
-        
+
         name: String,
-        
+
         #[orso_column(unique)]
         email: String,
-        
+
         age: i32,
-        
+
         #[orso_column(created_at)]
         created_at: Option<chrono::DateTime<chrono::Utc>>,
-        
+
         #[orso_column(updated_at)]
         updated_at: Option<chrono::DateTime<chrono::Utc>>,
     }
@@ -42,22 +45,22 @@ mod tests {
     struct TestUserWithMultipleCompressedFields {
         #[orso_column(primary_key)]
         id: Option<String>,
-        
+
         #[orso_column(compress)]
         prices: Vec<i64>,
-        
+
         #[orso_column(compress)]
         volumes: Vec<i64>,
-        
+
         #[orso_column(compress)]
         trades: Vec<i64>,
-        
+
         name: String,
         age: i32,
-        
+
         #[orso_column(created_at)]
         created_at: Option<chrono::DateTime<chrono::Utc>>,
-        
+
         #[orso_column(updated_at)]
         updated_at: Option<chrono::DateTime<chrono::Utc>>,
     }
@@ -69,7 +72,7 @@ mod tests {
         let db = Database::init(config).await?;
 
         // Create table
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(TestCompressed)]).await?;
 
         // Create test data
@@ -86,7 +89,7 @@ mod tests {
         // Retrieve all data (since we don't know the auto-generated ID)
         let all_records = TestCompressed::find_all(&db).await?;
         assert_eq!(all_records.len(), 1);
-        
+
         let retrieved = &all_records[0];
         assert_eq!(retrieved.name, "Test Data");
         assert_eq!(retrieved.age, 25);
@@ -104,7 +107,7 @@ mod tests {
         let db = Database::init(config).await?;
 
         // Create table
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(TestCompressed)]).await?;
 
         // Create test data
@@ -127,14 +130,19 @@ mod tests {
         test_data2.insert(&db).await?;
 
         // Filter by name
-        let filter = FilterOperator::Single(Filter::new_simple("name", Operator::Eq, Value::Text("Test 1".to_string())));
+        let filter = FilterOperator::Single(Filter::new_simple(
+            "name",
+            Operator::Eq,
+            Value::Text("Test 1".to_string()),
+        ));
         let filtered_records = TestCompressed::find_where(filter, &db).await?;
         assert_eq!(filtered_records.len(), 1);
         assert_eq!(filtered_records[0].name, "Test 1");
         assert_eq!(filtered_records[0].data_points, vec![1, 2, 3, 4, 5]);
 
         // Filter by age
-        let filter = FilterOperator::Single(Filter::new_simple("age", Operator::Gt, Value::Integer(25)));
+        let filter =
+            FilterOperator::Single(Filter::new_simple("age", Operator::Gt, Value::Integer(25)));
         let filtered_records = TestCompressed::find_where(filter, &db).await?;
         assert_eq!(filtered_records.len(), 1);
         assert_eq!(filtered_records[0].name, "Test 2");
@@ -149,7 +157,7 @@ mod tests {
         let db = Database::init(config).await?;
 
         // Create table
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(TestCompressed)]).await?;
 
         // Create test data
@@ -198,7 +206,7 @@ mod tests {
         let db = Database::init(config).await?;
 
         // Create table
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(TestCompressed)]).await?;
 
         // Create test data
@@ -234,7 +242,7 @@ mod tests {
         let db = Database::init(config).await?;
 
         // Create table
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(TestUserWithMultipleCompressedFields)]).await?;
 
         // Create test data with multiple compressed fields of the same type
@@ -255,7 +263,7 @@ mod tests {
         // Retrieve data
         let all_records = TestUserWithMultipleCompressedFields::find_all(&db).await?;
         assert_eq!(all_records.len(), 1);
-        
+
         let retrieved = &all_records[0];
         assert_eq!(retrieved.name, "Multi Compressed User");
         assert_eq!(retrieved.prices.len(), 1000);
@@ -279,7 +287,7 @@ mod tests {
         let db = Database::init(config).await?;
 
         // Create table
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(TestUser)]).await?;
 
         // Create test user
@@ -344,7 +352,7 @@ mod tests {
         let db = Database::init(config).await?;
 
         // Create table
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(TestUser)]).await?;
 
         // Create test users
@@ -381,7 +389,8 @@ mod tests {
         }
 
         // Test find_where with simple filter
-        let filter = FilterOperator::Single(Filter::new_simple("age", Operator::Gt, Value::Integer(25)));
+        let filter =
+            FilterOperator::Single(Filter::new_simple("age", Operator::Gt, Value::Integer(25)));
         let filtered_users = TestUser::find_where(filter, &db).await?;
         assert_eq!(filtered_users.len(), 2);
         assert!(filtered_users.iter().all(|u| u.age > 25));
@@ -422,7 +431,7 @@ mod tests {
         let db = Database::init(config).await?;
 
         // Create table
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(TestUser)]).await?;
 
         // Create first user
@@ -461,7 +470,7 @@ mod tests {
         let db = Database::init(config).await?;
 
         // Create table
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(TestUser)]).await?;
 
         // Create multiple users
@@ -500,17 +509,54 @@ mod tests {
         assert_eq!(all_users.len(), 3);
 
         // Test batch delete
-        let user_ids: Vec<&str> = all_users.iter()
+        let user_ids: Vec<&str> = all_users
+            .iter()
             .filter_map(|u| u.id.as_ref())
             .map(|id| id.as_str())
             .collect();
-        
+
         let deleted_count = TestUser::batch_delete(&user_ids, &db).await?;
         assert_eq!(deleted_count, 3);
 
         // Verify all users were deleted
         let remaining_users = TestUser::find_all(&db).await?;
         assert_eq!(remaining_users.len(), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_migration_no_change_detection() -> Result<(), Box<dyn std::error::Error>> {
+        use crate as orso;
+        use orso::{migration, Database, DatabaseConfig, Migrations, Orso};
+        use serde::{Deserialize, Serialize};
+        #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+        #[orso_table("migration_test")]
+        struct MigrationTest {
+            #[orso_column(primary_key)]
+            id: Option<String>,
+            name: String,
+            age: i32,
+        }
+        // Create in-memory database
+        let config = DatabaseConfig::memory();
+        let db = Database::init(config).await?;
+
+        // Run initial migration
+        let results1 = Migrations::init(&db, &[migration!(MigrationTest)]).await?;
+        println!("First migration results: {:?}", results1);
+
+        // Run migration again - should detect no changes
+        let results2 = Migrations::init(&db, &[migration!(MigrationTest)]).await?;
+        println!("Second migration results: {:?}", results2);
+
+        // Should be no migration actions since no schema changed
+        assert!(
+            results2.is_empty()
+                || results2
+                    .iter()
+                    .all(|r| matches!(r.action, orso::migrations::MigrationAction::SchemaMatched))
+        );
 
         Ok(())
     }
@@ -534,7 +580,7 @@ mod tests {
         }
 
         // Run initial migration
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(MigrationTestInitial)]).await?;
 
         // Now, create a new version with a unique constraint
@@ -551,13 +597,13 @@ mod tests {
 
         // Run migration again - this should detect the constraint change
         let results = Migrations::init(&db, &[migration!(MigrationTestWithUnique)]).await?;
-        
+
         // The migration should have detected changes and performed a migration
         assert!(!results.is_empty());
         match &results[0].action {
             orso::migrations::MigrationAction::DataMigrated { .. } => {
                 // Migration was performed as expected
-            },
+            }
             _ => {
                 panic!("Expected DataMigrated action, got {:?}", results[0].action);
             }
@@ -582,7 +628,10 @@ mod tests {
         };
 
         let result = user2.insert(&db).await;
-        assert!(result.is_err(), "Unique constraint should be enforced after migration");
+        assert!(
+            result.is_err(),
+            "Unique constraint should be enforced after migration"
+        );
 
         Ok(())
     }
@@ -606,7 +655,7 @@ mod tests {
         }
 
         // Run initial migration
-        use orso::{Migrations, migration};
+        use orso::{migration, Migrations};
         Migrations::init(&db, &[migration!(CompressionTestInitial)]).await?;
 
         // Insert some test data
@@ -633,13 +682,13 @@ mod tests {
 
         // Run migration again - this should detect the compression change
         let results = Migrations::init(&db, &[migration!(CompressionTestWithCompression)]).await?;
-        
+
         // The migration should have detected changes and performed a migration
         assert!(!results.is_empty());
         match &results[0].action {
             orso::migrations::MigrationAction::DataMigrated { .. } => {
                 // Migration was performed as expected
-            },
+            }
             _ => {
                 panic!("Expected DataMigrated action, got {:?}", results[0].action);
             }
@@ -653,5 +702,152 @@ mod tests {
         assert_eq!(all_records[0].data_points[99], 99);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod id_generation_tests {
+    use crate as orso;
+    use orso::{migration, Database, DatabaseConfig, Migrations, Orso, Utils};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+    #[orso_table("id_generation_test")]
+    struct IdGenerationTest {
+        #[orso_column(primary_key)]
+        id: Option<String>,
+        name: String,
+        age: i32,
+    }
+
+    #[tokio::test]
+    async fn test_id_auto_generation() -> Result<(), Box<dyn std::error::Error>> {
+        // Create in-memory database
+        let config = DatabaseConfig::memory();
+        let db = Database::init(config).await?;
+
+        // Create table
+        Migrations::init(&db, &[migration!(IdGenerationTest)]).await?;
+
+        // Create record with None ID (should auto-generate)
+        let record = IdGenerationTest {
+            id: None, // This should be auto-generated by the database
+            name: "Test User".to_string(),
+            age: 25,
+        };
+
+        // Insert record
+        record.insert(&db).await?;
+
+        // Retrieve all records
+        let all_records = IdGenerationTest::find_all(&db).await?;
+        assert_eq!(all_records.len(), 1);
+
+        let retrieved = &all_records[0];
+        assert!(retrieved.id.is_some(), "ID should be auto-generated");
+        assert!(
+            !retrieved.id.as_ref().unwrap().is_empty(),
+            "ID should not be empty"
+        );
+        assert_eq!(retrieved.name, "Test User");
+        assert_eq!(retrieved.age, 25);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_id_generation_debug() -> Result<(), Box<dyn std::error::Error>> {
+        // Create in-memory database
+        let config = DatabaseConfig::memory();
+        let db = Database::init(config).await?;
+
+        // Create table
+        Migrations::init(&db, &[migration!(IdGenerationTest)]).await?;
+
+        // Let's check the table schema to see what DEFAULT is set
+        let schema_sql =
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='id_generation_test'";
+        let mut rows = db.conn.query(schema_sql, ()).await?;
+
+        if let Some(row) = rows.next().await? {
+            let schema: String = row.get(0)?;
+            println!("Table schema: {}", schema);
+        }
+
+        // Create record with None ID
+        let record = IdGenerationTest {
+            id: None,
+            name: "Debug Test".to_string(),
+            age: 30,
+        };
+
+        // Insert record
+        record.insert(&db).await?;
+
+        // Check what was actually inserted
+        let all_records = IdGenerationTest::find_all(&db).await?;
+        println!("Records found: {}", all_records.len());
+
+        for record in &all_records {
+            println!("Record ID: {:?}", record.id);
+            println!("Record name: {}", record.name);
+            println!("Record age: {}", record.age);
+        }
+
+        assert_eq!(all_records.len(), 1);
+        let retrieved = &all_records[0];
+        assert!(retrieved.id.is_some(), "ID should be auto-generated");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_utils_generate_id() {
+        let id1 = Utils::generate_id();
+        let id2 = Utils::generate_id();
+
+        // Both should be valid UUIDs
+        assert!(!id1.is_empty());
+        assert!(!id2.is_empty());
+
+        // Should be different (very high probability)
+        assert_ne!(id1, id2);
+
+        // Should contain hyphens in correct positions for UUID format
+        assert!(id1.contains('-'));
+        assert_eq!(id1.len(), 36); // Standard UUID length
+
+        // Should parse as valid UUID
+        let uuid1 = uuid::Uuid::parse_str(&id1);
+        assert!(uuid1.is_ok());
+    }
+
+    #[test]
+    fn test_utils_current_timestamp() {
+        let timestamp = Utils::current_timestamp();
+
+        // Should not be empty
+        assert!(!timestamp.is_empty());
+
+        // Should contain T and end with Z
+        assert!(timestamp.contains('T'));
+        assert!(timestamp.ends_with('Z'));
+
+        // Should parse back correctly
+        let parsed = Utils::parse_timestamp(&timestamp);
+        assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn test_utils_parse_timestamp() {
+        // Test valid timestamp
+        let valid_timestamp = "2025-09-20T13:12:26.845448Z";
+        let parsed = Utils::parse_timestamp(valid_timestamp);
+        assert!(parsed.is_ok());
+
+        // Test invalid timestamp
+        let invalid_timestamp = "invalid-timestamp";
+        let parsed = Utils::parse_timestamp(invalid_timestamp);
+        assert!(parsed.is_err());
     }
 }
