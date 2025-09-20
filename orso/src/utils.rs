@@ -7,12 +7,12 @@ use uuid::Uuid;
 pub struct Utils;
 
 impl Utils {
-    pub fn generate_id() -> String {
-        Uuid::new_v4().to_string()
+    pub fn generate_id() -> Option<String> {
+        Some(Uuid::new_v4().to_string())
     }
 
-    pub fn current_timestamp() -> String {
-        Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+    pub fn current_timestamp() -> Option<DateTime<Utc>> {
+        Some(Utc::now())
     }
 
     pub fn parse_timestamp(timestamp: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
