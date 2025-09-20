@@ -6,6 +6,8 @@ ORSO is a Rust ORM (Object-Relational Mapping) library for working with SQLite a
 
 - **Derive-based schema definition**: Use `#[derive(Orso)]` to automatically generate database schema from Rust structs
 - **Multiple database modes**: Support for local SQLite, remote Turso, sync, and embedded modes
+- **Dual backend support**: Choose between libSQL (default) or native SQLite backends
+- **Bedrock compatibility**: Native support for Bedrock distributed databases through SQLite interface
 - **Automatic schema management**: Generate SQL schema and handle migrations
 - **Enhanced migration detection**: Automatic detection of constraint and compression attribute changes
 - **Data compression**: Built-in compression for large integer arrays with 5-10x space reduction
@@ -23,6 +25,25 @@ ORSO is a Rust ORM (Object-Relational Mapping) library for working with SQLite a
 ```bash
 cargo add orso
 ```
+
+### Feature Flags
+
+ORSO supports optional features through Cargo feature flags:
+
+```bash
+# Default installation (libSQL/Turso support only)
+cargo add orso
+
+# Install with SQLite support
+cargo add orso --features sqlite
+
+# Install with all features
+cargo add orso --all-features
+```
+
+**Available Features:**
+- `default`: Includes libSQL/Turso support
+- `sqlite`: Adds native SQLite backend support with rusqlite
 
 ## Quick Start
 
@@ -46,8 +67,23 @@ pub struct User {
 ```rust
 use orso::database::{Database, DatabaseConfig};
 
-// Local SQLite database
+// Local SQLite database (libSQL backend)
 let config = DatabaseConfig::local("app.sqlite");
+
+// In-memory database (libSQL backend)  
+let config = DatabaseConfig::memory();
+
+// Remote Turso database
+let config = DatabaseConfig::remote("libsql://your-db.turso.io", "your-auth-token");
+
+// SQLite database with native SQLite backend (requires sqlite feature)
+#[cfg(feature = "sqlite")]
+{
+    let config = DatabaseConfig::sqlite("app.db");           // Local file
+    let config = DatabaseConfig::sqlite(":memory:");          // In-memory
+    let config = DatabaseConfig::sqlite("http://bedrock-node:8080/db"); // Bedrock HTTP
+}
+
 let db = Database::init(config).await?;
 ```
 
@@ -409,28 +445,44 @@ ORSO supports different database connection modes:
 ```rust
 use orso::database::{Database, DatabaseConfig};
 
-// Local SQLite file
+// Local SQLite file (libSQL backend)
 let local_config = DatabaseConfig::local("local.db");
 
-// Remote Turso database
+// Remote Turso database (libSQL backend)
 let remote_config = DatabaseConfig::remote(
     "libsql://your-database.turso.io",
     "your-auth-token"
 );
 
-// Local database with sync to Turso
+// Local database with sync to Turso (libSQL backend)
 let sync_config = DatabaseConfig::sync(
     "local.db",
     "libsql://your-database.turso.io",
     "your-auth-token"
 );
 
-// Embedded replica with remote sync
+// Embedded replica with remote sync (libSQL backend)
 let embed_config = DatabaseConfig::embed(
     "replica.db",
     "libsql://your-database.turso.io",
     "your-auth-token"
 );
+
+// Native SQLite backend (requires sqlite feature)
+#[cfg(feature = "sqlite")]
+{
+    // Local SQLite file
+    let sqlite_config = DatabaseConfig::sqlite("native.db");
+    
+    // In-memory SQLite database
+    let memory_config = DatabaseConfig::sqlite(":memory:");
+    
+    // Bedrock HTTP endpoint
+    let bedrock_config = DatabaseConfig::sqlite("http://bedrock-node:8080/db");
+    
+    // Bedrock TCP connection
+    let tcp_config = DatabaseConfig::sqlite("tcp://bedrock-node:8081");
+}
 
 let db = Database::init(config).await?;
 ```
@@ -728,21 +780,124 @@ Operator::Between    // BETWEEN
 Operator::NotBetween // NOT BETWEEN
 ```
 
-## Error Handling
+## SQLite Backend Support
 
-ORSO provides comprehensive error handling:
+ORSO provides native SQLite backend support through the `sqlite` feature flag, offering an alternative to the default libSQL backend with additional benefits:
+
+### Features
+
+- **Native SQLite Support**: Direct rusqlite integration for optimal performance
+- **Bedrock Compatibility**: Connect to Bedrock nodes through standard SQLite interfaces
+- **Identical API**: All ORSO operations work exactly the same way regardless of backend
+- **Zero Learning Curve**: Same methods, same parameters, same return types
+- **Performance Optimized**: Direct SQLite access without wrapper overhead
+
+### Usage
+
+Enable SQLite support by adding the feature flag to your `Cargo.toml`:
+
+```toml
+[dependencies]
+orso = { version = "0.0.2", features = ["sqlite"] }
+```
+
+Then use the SQLite backend:
 
 ```rust
-use orso::{Error, Result};
+use orso::{Database, DatabaseConfig, Migrations, migration};
+use serde::{Deserialize, Serialize};
 
-match User::find_by_id("user-id", &db).await {
-    Ok(Some(user)) => println!("Found user: {}", user.name),
-    Ok(None) => println!("User not found"),
-    Err(Error::DatabaseError(msg)) => eprintln!("Database error: {}", msg),
-    Err(Error::Connection(err)) => eprintln!("Connection error: {}", err),
-    Err(e) => eprintln!("Other error: {}", e),
+#[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+#[orso_table("users")]
+struct User {
+    #[orso_column(primary_key)]
+    id: Option<String>,
+    name: String,
+    email: String,
+    age: i32,
 }
+
+// Local SQLite file
+let config = DatabaseConfig::sqlite("app.db");
+let db = Database::init(config).await?;
+
+// In-memory SQLite database
+let config = DatabaseConfig::sqlite(":memory:");
+let db = Database::init(config).await?;
+
+// All ORSO operations work identically:
+Migrations::init(&db, &[migration!(User)]).await?;
+let user = User {
+    id: None,
+    name: "John Doe".to_string(),
+    email: "john@example.com".to_string(),
+    age: 30,
+};
+user.insert(&db).await?;
+
+let all_users = User::find_all(&db).await?;
 ```
+
+## Bedrock Integration
+
+ORSO's SQLite backend provides seamless integration with Bedrock distributed database systems:
+
+### Connection Methods
+
+```rust
+// Connect to Bedrock HTTP endpoint
+let config = DatabaseConfig::sqlite("http://bedrock-node-1:8080/db");
+let db = Database::init(config).await?;
+
+// Connect to Bedrock local database file
+let config = DatabaseConfig::sqlite("/path/to/bedrock/data/node.db");
+let db = Database::init(config).await?;
+
+// Connect to Bedrock TCP endpoint
+let config = DatabaseConfig::sqlite("tcp://bedrock-node-1:8081");
+let db = Database::init(config).await?;
+```
+
+### Benefits
+
+- **Transparent Distribution**: ORSO handles all Bedrock-specific complexity
+- **Standard Interface**: Use familiar SQLite connection strings
+- **Automatic Replication**: Bedrock handles data replication transparently
+- **Consistent API**: Same ORSO operations work with Bedrock as with regular SQLite
+- **Performance**: Direct access to Bedrock nodes without additional overhead
+
+### Example Usage
+
+```rust
+// Connect to Bedrock cluster
+let config = DatabaseConfig::sqlite("http://bedrock-cluster-node-1:8080/db");
+let db = Database::init(config).await?;
+
+// Create table with migrations
+Migrations::init(&db, &[migration!(User)]).await?;
+
+// Insert data (Bedrock handles replication automatically)
+let user = User {
+    id: None,
+    name: "Alice Smith".to_string(),
+    email: "alice@example.com".to_string(),
+    age: 28,
+};
+user.insert(&db).await?;
+
+// Query data (works exactly like regular SQLite)
+let users = User::find_all(&db).await?;
+assert_eq!(users.len(), 1);
+```
+
+The SQLite backend ensures that all ORSO features work seamlessly with Bedrock, including:
+- ✅ Data compression
+- ✅ Enhanced migration detection
+- ✅ All CRUD operations
+- ✅ Query building and filtering
+- ✅ Batch operations
+- ✅ Unique constraints
+- ✅ All utility operations
 
 ## Supported Data Types
 
@@ -905,7 +1060,8 @@ Migrations::init(&db, &[migration!(AnalyticsData)]).await?;  // Triggers migrati
 
 ORSO depends on several key crates:
 
-- `libsql` - The SQLite/Turso database driver
+- `libsql` - The SQLite/Turso database driver (default backend)
+- `rusqlite` - Native SQLite driver (sqlite feature)
 - `serde` - Serialization framework
 - `chrono` - Date and time handling
 - `uuid` - UUID generation
@@ -918,3 +1074,4 @@ ORSO depends on several key crates:
 - Complex relationships may need manual implementation
 - Advanced SQL features may require raw queries
 - Foreign key values should be retrieved from database operations
+- Some advanced libSQL-specific features are only available with libSQL backend
