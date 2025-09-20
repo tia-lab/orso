@@ -406,7 +406,9 @@ mod tests {
     #[test]
     fn randomish_u64_ok() -> Result<()> {
         let mut rng = StdRng::seed_from_u64(42);
-        let v: Vec<u64> = (0..50_000).map(|_| (rng.r#gen::<i64>() >> 3) as u64).collect();
+        let v: Vec<u64> = (0..50_000)
+            .map(|_| (rng.r#gen::<i64>() >> 3) as u64)
+            .collect();
         let c = IntegerCodec::default();
         let blob = c.compress_u64(&v)?;
         let back = c.decompress_u64(&blob)?;

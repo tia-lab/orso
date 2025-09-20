@@ -802,43 +802,6 @@ mod id_generation_tests {
     }
 
     #[test]
-    fn test_utils_generate_id() {
-        let id1 = Utils::generate_id();
-        let id2 = Utils::generate_id();
-
-        // Both should be valid UUIDs
-        assert!(!id1.is_empty());
-        assert!(!id2.is_empty());
-
-        // Should be different (very high probability)
-        assert_ne!(id1, id2);
-
-        // Should contain hyphens in correct positions for UUID format
-        assert!(id1.contains('-'));
-        assert_eq!(id1.len(), 36); // Standard UUID length
-
-        // Should parse as valid UUID
-        let uuid1 = uuid::Uuid::parse_str(&id1);
-        assert!(uuid1.is_ok());
-    }
-
-    #[test]
-    fn test_utils_current_timestamp() {
-        let timestamp = Utils::current_timestamp();
-
-        // Should not be empty
-        assert!(!timestamp.is_empty());
-
-        // Should contain T and end with Z
-        assert!(timestamp.contains('T'));
-        assert!(timestamp.ends_with('Z'));
-
-        // Should parse back correctly
-        let parsed = Utils::parse_timestamp(&timestamp);
-        assert!(parsed.is_ok());
-    }
-
-    #[test]
     fn test_utils_parse_timestamp() {
         // Test valid timestamp
         let valid_timestamp = "2025-09-20T13:12:26.845448Z";

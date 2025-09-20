@@ -67,3 +67,6 @@ ZZCRATES
 
 test_*.db
 test_*.sqlite
+*.db
+QWEN*
+.qwen*
