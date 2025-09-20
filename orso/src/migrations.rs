@@ -312,7 +312,7 @@ where
             sql_type,
             nullable: *nullable,
             position: i as i32,
-            is_unique,
+            is_unique: is_unique || is_primary_key, // Primary keys are implicitly unique
             is_primary_key,
             foreign_key_reference: None, // Would need to add this to Orso trait
             has_default: false, // Would depend on field type and attributes

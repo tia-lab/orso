@@ -1,4 +1,24 @@
+//! Utility functions for ORSO
+use chrono::{DateTime, Utc};
+use uuid::Uuid;
+
+/// Utility functions for ORSO
+#[derive(Debug, Clone)]
 pub struct Utils;
+
+impl Utils {
+    pub fn generate_id() -> String {
+        Uuid::new_v4().to_string()
+    }
+
+    pub fn current_timestamp() -> String {
+        Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+    }
+
+    pub fn parse_timestamp(timestamp: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+        DateTime::parse_from_rfc3339(timestamp).map(|dt| dt.with_timezone(&Utc))
+    }
+}
 impl Utils {
     pub fn value_to_libsql_value(value: &crate::Value) -> libsql::Value {
         match value {
