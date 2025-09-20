@@ -436,7 +436,7 @@ impl QueryBuilder {
     /// Execute the query
     pub async fn execute<T>(&self, db: &Database) -> Result<Vec<T>>
     where
-        T: serde::de::DeserializeOwned,
+        T: crate::Orso,
     {
         let (sql, params) = self.build()?;
         let mut rows = db.query(&sql, params).await?;
@@ -449,12 +449,11 @@ impl QueryBuilder {
                     let value = row.get_value(i).unwrap_or(libsql::Value::Null);
                     map.insert(
                         column_name.to_string(),
-                        self.libsql_value_to_json_value(&value),
+                        T::libsql_value_to_value(&value),
                     );
                 }
             }
-            let json_value = serde_json::to_value(map)?;
-            let result: T = serde_json::from_value(json_value)?;
+            let result: T = T::from_map(map)?;
             results.push(result);
         }
 
@@ -468,7 +467,7 @@ impl QueryBuilder {
         pagination: &Pagination,
     ) -> Result<PaginatedResult<T>>
     where
-        T: serde::de::DeserializeOwned,
+        T: crate::Orso,
     {
         // Get total count
         let count_builder = QueryBuilder::new(&self.table).select(vec!["COUNT(*) as count"]);
@@ -496,27 +495,6 @@ impl QueryBuilder {
         let data = data_builder.execute::<T>(db).await?;
 
         Ok(PaginatedResult::with_total(data, pagination.clone(), total))
-    }
-
-    /// Convert libsql::Value to serde_json::Value
-    fn libsql_value_to_json_value(&self, value: &libsql::Value) -> serde_json::Value {
-        match value {
-            libsql::Value::Null => serde_json::Value::Null,
-            libsql::Value::Integer(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
-            libsql::Value::Real(f) => {
-                if let Some(n) = serde_json::Number::from_f64(*f) {
-                    serde_json::Value::Number(n)
-                } else {
-                    serde_json::Value::Null
-                }
-            }
-            libsql::Value::Text(s) => serde_json::Value::String(s.clone()),
-            libsql::Value::Blob(b) => serde_json::Value::Array(
-                b.iter()
-                    .map(|&byte| serde_json::Value::Number(serde_json::Number::from(byte)))
-                    .collect(),
-            ),
-        }
     }
 }
 

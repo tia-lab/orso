@@ -39,6 +39,7 @@ pub trait Orso: Serialize + DeserializeOwned + Send + Sync + Clone {
     fn field_names() -> Vec<&'static str>;
     fn field_types() -> Vec<FieldType>;
     fn field_nullable() -> Vec<bool>;
+    fn field_compressed() -> Vec<bool>;
     fn columns() -> Vec<&'static str>;
 
     fn get_primary_key(&self) -> Option<String>;

@@ -1,2 +1,3 @@
 ☐ Add cascade support for delete operation
 ☐  Add automatic lookup for upsert operation of the primary key
+✔ Add compression for array of integers using lz4 + integer encoding @done(25-09-20 11:21)

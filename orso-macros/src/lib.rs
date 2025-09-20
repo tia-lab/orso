@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Attribute, Data, DeriveInput, Fields, Lit, parse_macro_input, punctuated::Punctuated,
-    token::Comma,
+    parse_macro_input, punctuated::Punctuated, token::Comma, Attribute, Data, DeriveInput, Fields,
+    Lit,
 };
 
 #[proc_macro_attribute]
@@ -38,14 +38,35 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
         created_at_field,
         updated_at_field,
         unique_fields,
+        compressed_fields, // New compression flags
     ) = if let Data::Struct(data) = &input.data {
         if let Fields::Named(fields) = &data.fields {
             extract_field_metadata_original(&fields.named)
         } else {
-            (vec![], vec![], vec![], vec![], None, None, None, vec![])
+            (
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+            )
         }
     } else {
-        (vec![], vec![], vec![], vec![], None, None, None, vec![])
+        (
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+        )
     };
 
     // Generate dynamic getters based on actual fields found
@@ -113,6 +134,12 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
         .map(|field| quote! { stringify!(#field) })
         .collect();
 
+    // Generate compressed fields list
+    let compressed_field_flags: Vec<proc_macro2::TokenStream> = compressed_fields
+        .iter()
+        .map(|&is_compressed| quote! { #is_compressed })
+        .collect();
+
     // Generate only the trait implementation
     let expanded = quote! {
         impl #impl_generics orso::Orso for #name #ty_generics #where_clause {
@@ -168,6 +195,10 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
                 vec![#(#nullable_flags),*]
             }
 
+            fn field_compressed() -> Vec<bool> {
+                vec![#(#compressed_field_flags),*]
+            }
+
             fn columns() -> Vec<&'static str> {
                 vec![#(#field_names),*]
             }
@@ -196,6 +227,10 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
                 let created_field = Self::created_at_field();
                 let updated_field = Self::updated_at_field();
 
+                // Get compression information
+                let field_names = Self::field_names();
+                let compressed_flags = Self::field_compressed();
+
                 for (k, v) in map {
                     // Skip auto-generated fields when they are null - let SQLite use DEFAULT values
                     let should_skip = matches!(v, serde_json::Value::Null) && (
@@ -208,21 +243,80 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
                         continue;
                     }
 
-                    let value = match v {
-                        serde_json::Value::Null => orso::Value::Null,
-                        serde_json::Value::Bool(b) => orso::Value::Boolean(b),
-                        serde_json::Value::Number(n) => {
-                            if let Some(i) = n.as_i64() {
-                                orso::Value::Integer(i)
-                            } else if let Some(f) = n.as_f64() {
-                                orso::Value::Real(f)
-                            } else {
-                                orso::Value::Text(n.to_string())
+                    // Check if this field should be compressed
+                    let is_compressed = field_names.iter().position(|&name| name == k)
+                        .and_then(|pos| compressed_flags.get(pos).copied())
+                        .unwrap_or(false);
+                    eprintln!("Field {} is_compressed: {}", k, is_compressed);
+
+                    let value = if is_compressed {
+                        // Handle compressed fields
+                        eprintln!("Compressing field {}", k);
+                        match v {
+                            serde_json::Value::Array(arr) => {
+                                // Try to convert to Vec<i64> and compress
+                                let i64_vec: Result<Vec<i64>, _> = arr.iter().map(|val| {
+                                    match val {
+                                        serde_json::Value::Number(n) => {
+                                            n.as_i64().ok_or_else(|| "Invalid i64 value".to_string())
+                                        }
+                                        _ => Err("Non-numeric value in array".to_string()),
+                                    }
+                                }).collect();
+
+                                match i64_vec {
+                                    Ok(vec) => {
+                                        eprintln!("Compressing {} i64 values", vec.len());
+                                        // Compress the vector
+                                        let codec = orso::IntegerCodec::default();
+                                        match codec.compress_i64(&vec) {
+                                            Ok(compressed) => {
+                                                eprintln!("Compressed to {} bytes", compressed.len());
+                                                orso::Value::Blob(compressed)
+                                            }
+                                            Err(e) => {
+                                                eprintln!("Failed to compress: {:?}", e);
+                                                orso::Value::Text(serde_json::to_string(&vec)?)
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to convert to Vec<i64>: {:?}", e);
+                                        orso::Value::Text(serde_json::to_string(&arr)?)
+                                    }
+                                }
                             }
+                            serde_json::Value::Object(_) => orso::Value::Text(serde_json::to_string(&v)?),
+                            serde_json::Value::Null => orso::Value::Null,
+                            serde_json::Value::Bool(b) => orso::Value::Boolean(b),
+                            serde_json::Value::Number(n) => {
+                                if let Some(i) = n.as_i64() {
+                                    orso::Value::Integer(i)
+                                } else if let Some(f) = n.as_f64() {
+                                    orso::Value::Real(f)
+                                } else {
+                                    orso::Value::Text(n.to_string())
+                                }
+                            }
+                            serde_json::Value::String(s) => orso::Value::Text(s),
                         }
-                        serde_json::Value::String(s) => orso::Value::Text(s),
-                        serde_json::Value::Array(_) => orso::Value::Text(serde_json::to_string(&v)?),
-                        serde_json::Value::Object(_) => orso::Value::Text(serde_json::to_string(&v)?),
+                    } else {
+                        match v {
+                            serde_json::Value::Null => orso::Value::Null,
+                            serde_json::Value::Bool(b) => orso::Value::Boolean(b),
+                            serde_json::Value::Number(n) => {
+                                if let Some(i) = n.as_i64() {
+                                    orso::Value::Integer(i)
+                                } else if let Some(f) = n.as_f64() {
+                                    orso::Value::Real(f)
+                                } else {
+                                    orso::Value::Text(n.to_string())
+                                }
+                            }
+                            serde_json::Value::String(s) => orso::Value::Text(s),
+                            serde_json::Value::Array(_) => orso::Value::Text(serde_json::to_string(&v)?),
+                            serde_json::Value::Object(_) => orso::Value::Text(serde_json::to_string(&v)?),
+                        }
                     };
                     result.insert(k, value);
                 }
@@ -236,50 +330,93 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
                 // Get field metadata for type-aware conversion
                 let field_names = Self::field_names();
                 let field_types = Self::field_types();
+                let compressed_flags = Self::field_compressed();
 
                 for (k, v) in &map {
-                    // Don't skip any fields when deserializing FROM database - we want all values
+                    // Check if this field should be decompressed
+                    let is_compressed = field_names.iter().position(|&name| name == *k)
+                        .and_then(|pos| compressed_flags.get(pos).copied())
+                        .unwrap_or(false);
 
-                    let json_value = match v {
-                        orso::Value::Null => serde_json::Value::Null,
-                        orso::Value::Boolean(b) => serde_json::Value::Bool(*b),
-                        orso::Value::Integer(i) => {
-                            // Check if this field should be a boolean based on field type
-                            if let Some(pos) = field_names.iter().position(|&name| name == k) {
-                                if matches!(field_types.get(pos), Some(orso::FieldType::Boolean)) {
-                                    // This is a boolean field, convert 0/1 to bool
-                                    serde_json::Value::Bool(*i != 0)
+                    let json_value = if is_compressed {
+                        // Handle decompressed fields
+                        match v {
+                            orso::Value::Blob(blob) => {
+                                // Try to decompress as Vec<i64>
+                                let codec = orso::IntegerCodec::default();
+                                match codec.decompress_i64(blob) {
+                                    Ok(vec) => {
+                                        // Convert Vec<i64> to serde_json::Value::Array
+                                        serde_json::Value::Array(
+                                            vec.into_iter().map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                        )
+                                    }
+                                    Err(e) => {
+                                        // If decompression fails, log the error and return the raw data as a string
+                                        serde_json::Value::String(format!("Failed to decompress: {:?}", blob))
+                                    }
+                                }
+                            }
+                            orso::Value::Text(s) => {
+                                // Try to parse as JSON array
+                                match serde_json::from_str(s) {
+                                    Ok(val) => val,
+                                    Err(_) => serde_json::Value::String(s.clone()),
+                                }
+                            }
+                            orso::Value::Null => serde_json::Value::Null,
+                            orso::Value::Boolean(b) => serde_json::Value::Bool(*b),
+                            orso::Value::Integer(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
+                            orso::Value::Real(f) => {
+                                if let Some(n) = serde_json::Number::from_f64(*f) {
+                                    serde_json::Value::Number(n)
+                                } else {
+                                    serde_json::Value::String(f.to_string())
+                                }
+                            }
+                        }
+                    } else {
+                        match v {
+                            orso::Value::Null => serde_json::Value::Null,
+                            orso::Value::Boolean(b) => serde_json::Value::Bool(*b),
+                            orso::Value::Integer(i) => {
+                                // Check if this field should be a boolean based on field type
+                                if let Some(pos) = field_names.iter().position(|&name| name == *k) {
+                                    if matches!(field_types.get(pos), Some(orso::FieldType::Boolean)) {
+                                        // This is a boolean field, convert 0/1 to bool
+                                        serde_json::Value::Bool(*i != 0)
+                                    } else {
+                                        serde_json::Value::Number(serde_json::Number::from(*i))
+                                    }
                                 } else {
                                     serde_json::Value::Number(serde_json::Number::from(*i))
                                 }
-                            } else {
-                                serde_json::Value::Number(serde_json::Number::from(*i))
+                            },
+                            orso::Value::Real(f) => {
+                                if let Some(n) = serde_json::Number::from_f64(*f) {
+                                    serde_json::Value::Number(n)
+                                } else {
+                                    serde_json::Value::String(f.to_string())
+                                }
                             }
-                        },
-                        orso::Value::Real(f) => {
-                            if let Some(n) = serde_json::Number::from_f64(*f) {
-                                serde_json::Value::Number(n)
-                            } else {
-                                serde_json::Value::String(f.to_string())
+                            orso::Value::Text(s) => {
+                                // Check if this might be a SQLite datetime that needs conversion
+                                if s.len() == 19 && s.chars().nth(4) == Some('-') && s.chars().nth(7) == Some('-') && s.chars().nth(10) == Some(' ') {
+                                    // This looks like SQLite datetime format: "2025-09-13 10:50:43"
+                                    // Convert to RFC3339 format: "2025-09-13T10:50:43Z"
+                                    let rfc3339_format = s.replace(' ', "T") + "Z";
+                                    serde_json::Value::String(rfc3339_format)
+                                } else {
+                                    serde_json::Value::String(s.clone())
+                                }
+                            },
+                            orso::Value::Blob(b) => {
+                                serde_json::Value::Array(
+                                    b.iter()
+                                    .map(|byte| serde_json::Value::Number(serde_json::Number::from(*byte)))
+                                    .collect()
+                                )
                             }
-                        }
-                        orso::Value::Text(s) => {
-                            // Check if this might be a SQLite datetime that needs conversion
-                            if s.len() == 19 && s.chars().nth(4) == Some('-') && s.chars().nth(7) == Some('-') && s.chars().nth(10) == Some(' ') {
-                                // This looks like SQLite datetime format: "2025-09-13 10:50:43"
-                                // Convert to RFC3339 format: "2025-09-13T10:50:43Z"
-                                let rfc3339_format = s.replace(' ', "T") + "Z";
-                                serde_json::Value::String(rfc3339_format)
-                            } else {
-                                serde_json::Value::String(s.clone())
-                            }
-                        },
-                        orso::Value::Blob(b) => {
-                            serde_json::Value::Array(
-                                b.iter()
-                                .map(|byte| serde_json::Value::Number(serde_json::Number::from(*byte)))
-                                .collect()
-                            )
                         }
                     };
                     json_map.insert(k.clone(), json_value);
@@ -357,7 +494,7 @@ fn parse_field_column_definition(field: &syn::Field) -> String {
     map_rust_type_to_sql_column(&field.ty, &field_name)
 }
 
-// Parse orso_column attribute with support for foreign keys
+// Parse orso_column attribute with support for foreign keys and compression
 fn parse_orso_column_attr(
     attr: &syn::Attribute,
     field_name: &str,
@@ -368,6 +505,7 @@ fn parse_orso_column_attr(
     let mut foreign_table = None;
     let mut unique = false;
     let mut primary_key = false;
+    let mut is_compressed = false;
 
     let mut is_created_at = false;
     let mut is_updated_at = false;
@@ -396,12 +534,17 @@ fn parse_orso_column_attr(
             is_created_at = true;
         } else if meta.path.is_ident("updated_at") {
             is_updated_at = true;
+        } else if meta.path.is_ident("compress") {
+            is_compressed = true;
         }
         Ok(())
     });
 
     // Generate column definition
-    let base_type = if is_foreign_key {
+    // For compressed fields, we always use BLOB type
+    let base_type = if is_compressed {
+        "BLOB".to_string()
+    } else if is_foreign_key {
         "TEXT".to_string() // Foreign keys are always TEXT (UUID)
     } else {
         column_type.unwrap_or_else(|| map_rust_type_to_sql_type(field_type))
@@ -526,6 +669,7 @@ fn extract_field_metadata_original(
     Option<proc_macro2::Ident>,
     Option<proc_macro2::Ident>,
     Vec<proc_macro2::Ident>,
+    Vec<bool>, // Compression flags
 ) {
     let mut field_names = Vec::new();
     let mut column_defs = Vec::new();
@@ -535,6 +679,7 @@ fn extract_field_metadata_original(
     let mut created_at_field: Option<proc_macro2::Ident> = None;
     let mut updated_at_field: Option<proc_macro2::Ident> = None;
     let mut unique_fields = Vec::new();
+    let mut compressed_fields = Vec::new(); // New vector for compression flags
 
     for field in fields {
         if let Some(field_name) = &field.ident {
@@ -543,6 +688,7 @@ fn extract_field_metadata_original(
             let mut is_created_at = false;
             let mut is_updated_at = false;
             let mut is_unique = false;
+            let mut is_compressed = false; // Track compression
 
             for attr in &field.attrs {
                 if attr.path().is_ident("orso_column") {
@@ -558,6 +704,8 @@ fn extract_field_metadata_original(
                             updated_at_field = Some(field_name.clone());
                         } else if meta.path.is_ident("unique") {
                             is_unique = true;
+                        } else if meta.path.is_ident("compress") {
+                            is_compressed = true;
                         }
                         Ok(())
                     });
@@ -584,6 +732,9 @@ fn extract_field_metadata_original(
             // Check if field is Option<T> (nullable)
             let is_nullable = is_option_type(&field.ty);
             nullable_flags.push(is_nullable);
+
+            // Store compression flag
+            compressed_fields.push(is_compressed);
         }
     }
 
@@ -596,6 +747,7 @@ fn extract_field_metadata_original(
         created_at_field,
         updated_at_field,
         unique_fields,
+        compressed_fields, // Return compression flags
     )
 }
 

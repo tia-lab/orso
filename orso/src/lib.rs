@@ -1,7 +1,6 @@
 pub mod database;
 pub mod error;
 pub mod filters;
-pub mod i64_codec;
 pub mod integer_codec;
 pub mod macros;
 pub mod migrations;
@@ -11,6 +10,9 @@ pub mod query;
 pub mod traits;
 pub mod types;
 pub mod utils;
+
+#[cfg(test)]
+mod test;
 
 pub use chrono;
 pub use database::*;
