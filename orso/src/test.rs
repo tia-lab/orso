@@ -37,6 +37,31 @@ mod tests {
         updated_at: Option<chrono::DateTime<chrono::Utc>>,
     }
 
+    #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+    #[orso_table("test_multi_compressed")]
+    struct TestUserWithMultipleCompressedFields {
+        #[orso_column(primary_key)]
+        id: Option<String>,
+        
+        #[orso_column(compress)]
+        prices: Vec<i64>,
+        
+        #[orso_column(compress)]
+        volumes: Vec<i64>,
+        
+        #[orso_column(compress)]
+        trades: Vec<i64>,
+        
+        name: String,
+        age: i32,
+        
+        #[orso_column(created_at)]
+        created_at: Option<chrono::DateTime<chrono::Utc>>,
+        
+        #[orso_column(updated_at)]
+        updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+
     #[tokio::test]
     async fn test_compressed_field_integration() -> Result<(), Box<dyn std::error::Error>> {
         // Create in-memory database
@@ -203,48 +228,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_multiple_compressed_records() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_multiple_compressed_fields_same_type() -> Result<(), Box<dyn std::error::Error>> {
         // Create in-memory database
         let config = DatabaseConfig::memory();
         let db = Database::init(config).await?;
 
         // Create table
         use orso::{Migrations, migration};
-        Migrations::init(&db, &[migration!(TestCompressed)]).await?;
+        Migrations::init(&db, &[migration!(TestUserWithMultipleCompressedFields)]).await?;
 
-        // Create multiple test records with different sized compressed data
-        let test_data1 = TestCompressed {
+        // Create test data with multiple compressed fields of the same type
+        let test_data = TestUserWithMultipleCompressedFields {
             id: None,
-            data_points: (0..100).map(|i| i as i64).collect(),
-            name: "Small Data".to_string(),
-            age: 20,
-        };
-
-        let test_data2 = TestCompressed {
-            id: None,
-            data_points: (0..10000).map(|i| i as i64).collect(),
-            name: "Large Data".to_string(),
+            prices: (0..1000).map(|i| i as i64 * 100).collect(),
+            volumes: (0..1000).map(|i| i as i64 * 50).collect(),
+            trades: (0..1000).map(|i| i as i64 * 25).collect(),
+            name: "Multi Compressed User".to_string(),
             age: 30,
+            created_at: None,
+            updated_at: None,
         };
 
         // Insert data
-        test_data1.insert(&db).await?;
-        test_data2.insert(&db).await?;
+        test_data.insert(&db).await?;
 
-        // Retrieve all records
-        let all_records = TestCompressed::find_all(&db).await?;
-        assert_eq!(all_records.len(), 2);
-
-        // Find records by name
-        let filter = FilterOperator::Single(Filter::new_simple("name", Operator::Eq, Value::Text("Small Data".to_string())));
-        let small_records = TestCompressed::find_where(filter, &db).await?;
-        assert_eq!(small_records.len(), 1);
-        assert_eq!(small_records[0].data_points.len(), 100);
-
-        let filter = FilterOperator::Single(Filter::new_simple("name", Operator::Eq, Value::Text("Large Data".to_string())));
-        let large_records = TestCompressed::find_where(filter, &db).await?;
-        assert_eq!(large_records.len(), 1);
-        assert_eq!(large_records[0].data_points.len(), 10000);
+        // Retrieve data
+        let all_records = TestUserWithMultipleCompressedFields::find_all(&db).await?;
+        assert_eq!(all_records.len(), 1);
+        
+        let retrieved = &all_records[0];
+        assert_eq!(retrieved.name, "Multi Compressed User");
+        assert_eq!(retrieved.prices.len(), 1000);
+        assert_eq!(retrieved.volumes.len(), 1000);
+        assert_eq!(retrieved.trades.len(), 1000);
+        assert_eq!(retrieved.prices[0], 0);
+        assert_eq!(retrieved.prices[999], 99900);
+        assert_eq!(retrieved.volumes[0], 0);
+        assert_eq!(retrieved.volumes[999], 49950);
+        assert_eq!(retrieved.trades[0], 0);
+        assert_eq!(retrieved.trades[999], 24975);
 
         Ok(())
     }

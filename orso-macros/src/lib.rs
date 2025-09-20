@@ -231,7 +231,304 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
                 let field_names = Self::field_names();
                 let compressed_flags = Self::field_compressed();
 
+                // Group compressed fields by type for batch processing
+                let mut compressed_i64_fields: std::collections::HashMap<String, Vec<i64>> = std::collections::HashMap::new();
+                let mut compressed_u64_fields: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
+                let mut compressed_i32_fields: std::collections::HashMap<String, Vec<i32>> = std::collections::HashMap::new();
+                let mut compressed_u32_fields: std::collections::HashMap<String, Vec<u32>> = std::collections::HashMap::new();
+
+                // First pass: collect compressed fields by type
+                for (k, v) in &map {
+                    // Skip auto-generated fields when they are null - let SQLite use DEFAULT values
+                    let should_skip = matches!(v, serde_json::Value::Null) && (
+                        *k == pk_field ||
+                        (created_field.is_some() && *k == created_field.unwrap()) ||
+                        (updated_field.is_some() && *k == updated_field.unwrap())
+                    );
+
+                    if should_skip {
+                        continue;
+                    }
+
+                    // Check if this field should be compressed
+                    let is_compressed = field_names.iter().position(|&name| name == *k)
+                        .and_then(|pos| compressed_flags.get(pos).copied())
+                        .unwrap_or(false);
+
+                    if is_compressed {
+                        // Handle compressed fields by collecting them for batch processing
+                        match v {
+                            serde_json::Value::Array(arr) => {
+                                // Determine the element type of the array and collect accordingly
+                                // For now, we'll try to convert to the most common integer types
+                                let i64_result: Result<Vec<i64>, _> = arr.iter().map(|val| {
+                                    match val {
+                                        serde_json::Value::Number(n) => {
+                                            n.as_i64().ok_or_else(|| "Invalid i64 value".to_string())
+                                        }
+                                        _ => Err("Non-numeric value in array".to_string()),
+                                    }
+                                }).collect();
+                                
+                                if let Ok(vec) = i64_result {
+                                    compressed_i64_fields.insert(k.clone(), vec);
+                                    continue; // Skip normal processing for this field
+                                }
+                                
+                                // Try u64
+                                let u64_result: Result<Vec<u64>, _> = arr.iter().map(|val| {
+                                    match val {
+                                        serde_json::Value::Number(n) => {
+                                            n.as_u64().ok_or_else(|| "Invalid u64 value".to_string())
+                                        }
+                                        _ => Err("Non-numeric value in array".to_string()),
+                                    }
+                                }).collect();
+                                
+                                if let Ok(vec) = u64_result {
+                                    compressed_u64_fields.insert(k.clone(), vec);
+                                    continue; // Skip normal processing for this field
+                                }
+                                
+                                // Try i32
+                                let i32_result: Result<Vec<i32>, _> = arr.iter().map(|val| {
+                                    match val {
+                                        serde_json::Value::Number(n) => {
+                                            n.as_i64().and_then(|i| i32::try_from(i).ok()).ok_or_else(|| "Invalid i32 value".to_string())
+                                        }
+                                        _ => Err("Non-numeric value in array".to_string()),
+                                    }
+                                }).collect();
+                                
+                                if let Ok(vec) = i32_result {
+                                    compressed_i32_fields.insert(k.clone(), vec);
+                                    continue; // Skip normal processing for this field
+                                }
+                                
+                                // Try u32
+                                let u32_result: Result<Vec<u32>, _> = arr.iter().map(|val| {
+                                    match val {
+                                        serde_json::Value::Number(n) => {
+                                            n.as_u64().and_then(|u| u32::try_from(u).ok()).ok_or_else(|| "Invalid u32 value".to_string())
+                                        }
+                                        _ => Err("Non-numeric value in array".to_string()),
+                                    }
+                                }).collect();
+                                
+                                if let Ok(vec) = u32_result {
+                                    compressed_u32_fields.insert(k.clone(), vec);
+                                    continue; // Skip normal processing for this field
+                                }
+                            }
+                            _ => {} // Fall through to normal processing
+                        }
+                    }
+                }
+
+                // Batch process compressed fields by type
+                // Process i64 fields
+                if !compressed_i64_fields.is_empty() {
+                    let codec = orso::IntegerCodec::default();
+                    if compressed_i64_fields.len() == 1 {
+                        // Single field - process individually
+                        let (field_name, vec) = compressed_i64_fields.into_iter().next().unwrap();
+                        match codec.compress_i64(&vec) {
+                            Ok(compressed) => {
+                                result.insert(field_name, orso::Value::Blob(compressed));
+                            }
+                            Err(_) => {
+                                // Fallback to JSON string
+                                if let Some(original_value) = map.get(&field_name) {
+                                    result.insert(field_name, orso::Value::Text(serde_json::to_string(original_value)?));
+                                }
+                            }
+                        }
+                    } else {
+                        // Multiple fields - process in batch
+                        let field_names: Vec<String> = compressed_i64_fields.keys().cloned().collect();
+                        let arrays: Vec<Vec<i64>> = compressed_i64_fields.values().cloned().collect();
+                        
+                        match codec.compress_many_i64(&arrays) {
+                            Ok(compressed_blobs) => {
+                                for (field_name, blob) in field_names.into_iter().zip(compressed_blobs.into_iter()) {
+                                    result.insert(field_name, orso::Value::Blob(blob));
+                                }
+                            }
+                            Err(_) => {
+                                // Fallback to individual compression
+                                for (field_name, vec) in compressed_i64_fields {
+                                    match codec.compress_i64(&vec) {
+                                        Ok(compressed) => {
+                                            result.insert(field_name, orso::Value::Blob(compressed));
+                                        }
+                                        Err(_) => {
+                                            // Ultimate fallback to JSON string
+                                            if let Some(original_value) = map.get(&field_name) {
+                                                result.insert(field_name, orso::Value::Text(serde_json::to_string(original_value)?));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Process u64 fields
+                if !compressed_u64_fields.is_empty() {
+                    let codec = orso::IntegerCodec::default();
+                    if compressed_u64_fields.len() == 1 {
+                        // Single field - process individually
+                        let (field_name, vec) = compressed_u64_fields.into_iter().next().unwrap();
+                        match codec.compress_u64(&vec) {
+                            Ok(compressed) => {
+                                result.insert(field_name, orso::Value::Blob(compressed));
+                            }
+                            Err(_) => {
+                                // Fallback to JSON string
+                                if let Some(original_value) = map.get(&field_name) {
+                                    result.insert(field_name, orso::Value::Text(serde_json::to_string(original_value)?));
+                                }
+                            }
+                        }
+                    } else {
+                        // Multiple fields - process in batch
+                        let field_names: Vec<String> = compressed_u64_fields.keys().cloned().collect();
+                        let arrays: Vec<Vec<u64>> = compressed_u64_fields.values().cloned().collect();
+                        
+                        match codec.compress_many_u64(&arrays) {
+                            Ok(compressed_blobs) => {
+                                for (field_name, blob) in field_names.into_iter().zip(compressed_blobs.into_iter()) {
+                                    result.insert(field_name, orso::Value::Blob(blob));
+                                }
+                            }
+                            Err(_) => {
+                                // Fallback to individual compression
+                                for (field_name, vec) in compressed_u64_fields {
+                                    match codec.compress_u64(&vec) {
+                                        Ok(compressed) => {
+                                            result.insert(field_name, orso::Value::Blob(compressed));
+                                        }
+                                        Err(_) => {
+                                            // Ultimate fallback to JSON string
+                                            if let Some(original_value) = map.get(&field_name) {
+                                                result.insert(field_name, orso::Value::Text(serde_json::to_string(original_value)?));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Process i32 fields (compress as i64 for storage efficiency)
+                if !compressed_i32_fields.is_empty() {
+                    let codec = orso::IntegerCodec::default();
+                    if compressed_i32_fields.len() == 1 {
+                        // Single field - process individually
+                        let (field_name, vec) = compressed_i32_fields.into_iter().next().unwrap();
+                        let i64_vec: Vec<i64> = vec.into_iter().map(|x| x as i64).collect();
+                        match codec.compress_i64(&i64_vec) {
+                            Ok(compressed) => {
+                                result.insert(field_name, orso::Value::Blob(compressed));
+                            }
+                            Err(_) => {
+                                // Fallback to JSON string
+                                if let Some(original_value) = map.get(&field_name) {
+                                    result.insert(field_name, orso::Value::Text(serde_json::to_string(original_value)?));
+                                }
+                            }
+                        }
+                    } else {
+                        // Multiple fields - process in batch
+                        let field_names: Vec<String> = compressed_i32_fields.keys().cloned().collect();
+                        let arrays: Vec<Vec<i64>> = compressed_i32_fields.values().map(|vec| vec.iter().map(|&x| x as i64).collect()).collect();
+                        
+                        match codec.compress_many_i64(&arrays) {
+                            Ok(compressed_blobs) => {
+                                for (field_name, blob) in field_names.into_iter().zip(compressed_blobs.into_iter()) {
+                                    result.insert(field_name, orso::Value::Blob(blob));
+                                }
+                            }
+                            Err(_) => {
+                                // Fallback to individual compression
+                                for (field_name, vec) in compressed_i32_fields {
+                                    let i64_vec: Vec<i64> = vec.into_iter().map(|x| x as i64).collect();
+                                    match codec.compress_i64(&i64_vec) {
+                                        Ok(compressed) => {
+                                            result.insert(field_name, orso::Value::Blob(compressed));
+                                        }
+                                        Err(_) => {
+                                            // Ultimate fallback to JSON string
+                                            if let Some(original_value) = map.get(&field_name) {
+                                                result.insert(field_name, orso::Value::Text(serde_json::to_string(original_value)?));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Process u32 fields (compress as u64 for storage efficiency)
+                if !compressed_u32_fields.is_empty() {
+                    let codec = orso::IntegerCodec::default();
+                    if compressed_u32_fields.len() == 1 {
+                        // Single field - process individually
+                        let (field_name, vec) = compressed_u32_fields.into_iter().next().unwrap();
+                        let u64_vec: Vec<u64> = vec.into_iter().map(|x| x as u64).collect();
+                        match codec.compress_u64(&u64_vec) {
+                            Ok(compressed) => {
+                                result.insert(field_name, orso::Value::Blob(compressed));
+                            }
+                            Err(_) => {
+                                // Fallback to JSON string
+                                if let Some(original_value) = map.get(&field_name) {
+                                    result.insert(field_name, orso::Value::Text(serde_json::to_string(original_value)?));
+                                }
+                            }
+                        }
+                    } else {
+                        // Multiple fields - process in batch
+                        let field_names: Vec<String> = compressed_u32_fields.keys().cloned().collect();
+                        let arrays: Vec<Vec<u64>> = compressed_u32_fields.values().map(|vec| vec.iter().map(|&x| x as u64).collect()).collect();
+                        
+                        match codec.compress_many_u64(&arrays) {
+                            Ok(compressed_blobs) => {
+                                for (field_name, blob) in field_names.into_iter().zip(compressed_blobs.into_iter()) {
+                                    result.insert(field_name, orso::Value::Blob(blob));
+                                }
+                            }
+                            Err(_) => {
+                                // Fallback to individual compression
+                                for (field_name, vec) in compressed_u32_fields {
+                                    let u64_vec: Vec<u64> = vec.into_iter().map(|x| x as u64).collect();
+                                    match codec.compress_u64(&u64_vec) {
+                                        Ok(compressed) => {
+                                            result.insert(field_name, orso::Value::Blob(compressed));
+                                        }
+                                        Err(_) => {
+                                            // Ultimate fallback to JSON string
+                                            if let Some(original_value) = map.get(&field_name) {
+                                                result.insert(field_name, orso::Value::Text(serde_json::to_string(original_value)?));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Second pass: process non-compressed fields and any fields that fell through
                 for (k, v) in map {
+                    // Skip fields that were already processed as compressed
+                    if result.contains_key(&k) {
+                        continue;
+                    }
+
                     // Skip auto-generated fields when they are null - let SQLite use DEFAULT values
                     let should_skip = matches!(v, serde_json::Value::Null) && (
                         k == pk_field ||
@@ -243,83 +540,25 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
                         continue;
                     }
 
-                    // Check if this field should be compressed
-                    let is_compressed = field_names.iter().position(|&name| name == k)
-                        .and_then(|pos| compressed_flags.get(pos).copied())
-                        .unwrap_or(false);
-                    eprintln!("Field {} is_compressed: {}", k, is_compressed);
-
-                    let value = if is_compressed {
-                        // Handle compressed fields
-                        eprintln!("Compressing field {}", k);
-                        match v {
-                            serde_json::Value::Array(arr) => {
-                                // Try to convert to Vec<i64> and compress
-                                let i64_vec: Result<Vec<i64>, _> = arr.iter().map(|val| {
-                                    match val {
-                                        serde_json::Value::Number(n) => {
-                                            n.as_i64().ok_or_else(|| "Invalid i64 value".to_string())
-                                        }
-                                        _ => Err("Non-numeric value in array".to_string()),
-                                    }
-                                }).collect();
-
-                                match i64_vec {
-                                    Ok(vec) => {
-                                        eprintln!("Compressing {} i64 values", vec.len());
-                                        // Compress the vector
-                                        let codec = orso::IntegerCodec::default();
-                                        match codec.compress_i64(&vec) {
-                                            Ok(compressed) => {
-                                                eprintln!("Compressed to {} bytes", compressed.len());
-                                                orso::Value::Blob(compressed)
-                                            }
-                                            Err(e) => {
-                                                eprintln!("Failed to compress: {:?}", e);
-                                                orso::Value::Text(serde_json::to_string(&vec)?)
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Failed to convert to Vec<i64>: {:?}", e);
-                                        orso::Value::Text(serde_json::to_string(&arr)?)
-                                    }
-                                }
+                    let value = match v {
+                        serde_json::Value::Null => orso::Value::Null,
+                        serde_json::Value::Bool(b) => orso::Value::Boolean(b),
+                        serde_json::Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                orso::Value::Integer(i)
+                            } else if let Some(f) = n.as_f64() {
+                                orso::Value::Real(f)
+                            } else {
+                                orso::Value::Text(n.to_string())
                             }
-                            serde_json::Value::Object(_) => orso::Value::Text(serde_json::to_string(&v)?),
-                            serde_json::Value::Null => orso::Value::Null,
-                            serde_json::Value::Bool(b) => orso::Value::Boolean(b),
-                            serde_json::Value::Number(n) => {
-                                if let Some(i) = n.as_i64() {
-                                    orso::Value::Integer(i)
-                                } else if let Some(f) = n.as_f64() {
-                                    orso::Value::Real(f)
-                                } else {
-                                    orso::Value::Text(n.to_string())
-                                }
-                            }
-                            serde_json::Value::String(s) => orso::Value::Text(s),
                         }
-                    } else {
-                        match v {
-                            serde_json::Value::Null => orso::Value::Null,
-                            serde_json::Value::Bool(b) => orso::Value::Boolean(b),
-                            serde_json::Value::Number(n) => {
-                                if let Some(i) = n.as_i64() {
-                                    orso::Value::Integer(i)
-                                } else if let Some(f) = n.as_f64() {
-                                    orso::Value::Real(f)
-                                } else {
-                                    orso::Value::Text(n.to_string())
-                                }
-                            }
-                            serde_json::Value::String(s) => orso::Value::Text(s),
-                            serde_json::Value::Array(_) => orso::Value::Text(serde_json::to_string(&v)?),
-                            serde_json::Value::Object(_) => orso::Value::Text(serde_json::to_string(&v)?),
-                        }
+                        serde_json::Value::String(s) => orso::Value::Text(s),
+                        serde_json::Value::Array(_) => orso::Value::Text(serde_json::to_string(&v)?),
+                        serde_json::Value::Object(_) => orso::Value::Text(serde_json::to_string(&v)?),
                     };
                     result.insert(k, value);
                 }
+
                 Ok(result)
             }
 
@@ -332,91 +571,347 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
                 let field_types = Self::field_types();
                 let compressed_flags = Self::field_compressed();
 
+                // Group compressed fields by type for batch processing
+                let mut compressed_i64_blobs: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+                let mut compressed_u64_blobs: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+                let mut compressed_i32_blobs: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+                let mut compressed_u32_blobs: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+
+                // First pass: collect compressed fields by type
                 for (k, v) in &map {
                     // Check if this field should be decompressed
                     let is_compressed = field_names.iter().position(|&name| name == *k)
                         .and_then(|pos| compressed_flags.get(pos).copied())
                         .unwrap_or(false);
 
-                    let json_value = if is_compressed {
-                        // Handle decompressed fields
+                    if is_compressed {
                         match v {
                             orso::Value::Blob(blob) => {
-                                // Try to decompress as Vec<i64>
-                                let codec = orso::IntegerCodec::default();
-                                match codec.decompress_i64(blob) {
-                                    Ok(vec) => {
-                                        // Convert Vec<i64> to serde_json::Value::Array
+                                // For now, we'll assume i64 for all compressed fields
+                                // In a more sophisticated implementation, we might store type info in the blob header
+                                compressed_i64_blobs.insert(k.clone(), blob.clone());
+                            }
+                            _ => {
+                                // Non-blob compressed fields - handle individually
+                                let json_value = match v {
+                                    orso::Value::Text(s) => {
+                                        // Try to parse as JSON array
+                                        match serde_json::from_str(s) {
+                                            Ok(val) => val,
+                                            Err(_) => serde_json::Value::String(s.clone()),
+                                        }
+                                    }
+                                    orso::Value::Null => serde_json::Value::Null,
+                                    orso::Value::Boolean(b) => serde_json::Value::Bool(*b),
+                                    orso::Value::Integer(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
+                                    orso::Value::Real(f) => {
+                                        if let Some(n) = serde_json::Number::from_f64(*f) {
+                                            serde_json::Value::Number(n)
+                                        } else {
+                                            serde_json::Value::String(f.to_string())
+                                        }
+                                    }
+                                    orso::Value::Blob(blob) => {
+                                        // This shouldn't happen for compressed fields that are already blobs
                                         serde_json::Value::Array(
-                                            vec.into_iter().map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                            blob.iter()
+                                            .map(|byte| serde_json::Value::Number(serde_json::Number::from(*byte)))
+                                            .collect()
                                         )
                                     }
-                                    Err(e) => {
-                                        // If decompression fails, log the error and return the raw data as a string
-                                        serde_json::Value::String(format!("Failed to decompress: {:?}", blob))
-                                    }
-                                }
+                                };
+                                json_map.insert(k.clone(), json_value);
                             }
-                            orso::Value::Text(s) => {
-                                // Try to parse as JSON array
-                                match serde_json::from_str(s) {
-                                    Ok(val) => val,
-                                    Err(_) => serde_json::Value::String(s.clone()),
-                                }
+                        }
+                    }
+                }
+
+                // Batch process compressed fields by type
+                // Process i64 fields
+                if !compressed_i64_blobs.is_empty() {
+                    let codec = orso::IntegerCodec::default();
+                    if compressed_i64_blobs.len() == 1 {
+                        // Single field - process individually
+                        let (field_name, blob) = compressed_i64_blobs.into_iter().next().unwrap();
+                        match codec.decompress_i64(&blob) {
+                            Ok(vec) => {
+                                // Convert Vec<i64> to serde_json::Value::Array
+                                let json_array = serde_json::Value::Array(
+                                    vec.into_iter().map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                );
+                                json_map.insert(field_name, json_array);
                             }
-                            orso::Value::Null => serde_json::Value::Null,
-                            orso::Value::Boolean(b) => serde_json::Value::Bool(*b),
-                            orso::Value::Integer(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
-                            orso::Value::Real(f) => {
-                                if let Some(n) = serde_json::Number::from_f64(*f) {
-                                    serde_json::Value::Number(n)
-                                } else {
-                                    serde_json::Value::String(f.to_string())
-                                }
+                            Err(e) => {
+                                // If decompression fails, return the raw data as a string
+                                let error_msg = format!("Failed to decompress: {:?}", blob);
+                                json_map.insert(field_name, serde_json::Value::String(error_msg));
                             }
                         }
                     } else {
-                        match v {
-                            orso::Value::Null => serde_json::Value::Null,
-                            orso::Value::Boolean(b) => serde_json::Value::Bool(*b),
-                            orso::Value::Integer(i) => {
-                                // Check if this field should be a boolean based on field type
-                                if let Some(pos) = field_names.iter().position(|&name| name == *k) {
-                                    if matches!(field_types.get(pos), Some(orso::FieldType::Boolean)) {
-                                        // This is a boolean field, convert 0/1 to bool
-                                        serde_json::Value::Bool(*i != 0)
-                                    } else {
-                                        serde_json::Value::Number(serde_json::Number::from(*i))
+                        // Multiple fields - process in batch
+                        let field_names: Vec<String> = compressed_i64_blobs.keys().cloned().collect();
+                        let blobs: Vec<Vec<u8>> = compressed_i64_blobs.values().cloned().collect();
+                        
+                        match codec.decompress_many_i64(&blobs) {
+                            Ok(arrays) => {
+                                for (field_name, vec) in field_names.into_iter().zip(arrays.into_iter()) {
+                                    // Convert Vec<i64> to serde_json::Value::Array
+                                    let json_array = serde_json::Value::Array(
+                                        vec.into_iter().map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                    );
+                                    json_map.insert(field_name, json_array);
+                                }
+                            }
+                            Err(_) => {
+                                // Fallback to individual decompression
+                                for (field_name, blob) in compressed_i64_blobs {
+                                    match codec.decompress_i64(&blob) {
+                                        Ok(vec) => {
+                                            // Convert Vec<i64> to serde_json::Value::Array
+                                            let json_array = serde_json::Value::Array(
+                                                vec.into_iter().map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                            );
+                                            json_map.insert(field_name, json_array);
+                                        }
+                                        Err(_) => {
+                                            // Ultimate fallback to raw blob data as string
+                                            let error_msg = format!("Failed to decompress blob for field: {}", field_name);
+                                            json_map.insert(field_name, serde_json::Value::String(error_msg));
+                                        }
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Process u64 fields (currently we don't distinguish u64 from i64 in decompression)
+                if !compressed_u64_blobs.is_empty() {
+                    let codec = orso::IntegerCodec::default();
+                    if compressed_u64_blobs.len() == 1 {
+                        // Single field - process individually
+                        let (field_name, blob) = compressed_u64_blobs.into_iter().next().unwrap();
+                        match codec.decompress_u64(&blob) {
+                            Ok(vec) => {
+                                // Convert Vec<u64> to serde_json::Value::Array
+                                let json_array = serde_json::Value::Array(
+                                    vec.into_iter().map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                );
+                                json_map.insert(field_name, json_array);
+                            }
+                            Err(e) => {
+                                // If decompression fails, return the raw data as a string
+                                let error_msg = format!("Failed to decompress: {:?}", blob);
+                                json_map.insert(field_name, serde_json::Value::String(error_msg));
+                            }
+                        }
+                    } else {
+                        // Multiple fields - process in batch
+                        let field_names: Vec<String> = compressed_u64_blobs.keys().cloned().collect();
+                        let blobs: Vec<Vec<u8>> = compressed_u64_blobs.values().cloned().collect();
+                        
+                        match codec.decompress_many_u64(&blobs) {
+                            Ok(arrays) => {
+                                for (field_name, vec) in field_names.into_iter().zip(arrays.into_iter()) {
+                                    // Convert Vec<u64> to serde_json::Value::Array
+                                    let json_array = serde_json::Value::Array(
+                                        vec.into_iter().map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                    );
+                                    json_map.insert(field_name, json_array);
+                                }
+                            }
+                            Err(_) => {
+                                // Fallback to individual decompression
+                                for (field_name, blob) in compressed_u64_blobs {
+                                    match codec.decompress_u64(&blob) {
+                                        Ok(vec) => {
+                                            // Convert Vec<u64> to serde_json::Value::Array
+                                            let json_array = serde_json::Value::Array(
+                                                vec.into_iter().map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                            );
+                                            json_map.insert(field_name, json_array);
+                                        }
+                                        Err(_) => {
+                                            // Ultimate fallback to raw blob data as string
+                                            let error_msg = format!("Failed to decompress blob for field: {}", field_name);
+                                            json_map.insert(field_name, serde_json::Value::String(error_msg));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Process i32 fields (convert from i64 back to i32)
+                if !compressed_i32_blobs.is_empty() {
+                    let codec = orso::IntegerCodec::default();
+                    if compressed_i32_blobs.len() == 1 {
+                        // Single field - process individually
+                        let (field_name, blob) = compressed_i32_blobs.into_iter().next().unwrap();
+                        match codec.decompress_i64(&blob) {
+                            Ok(vec) => {
+                                // Convert Vec<i64> to Vec<i32> and then to serde_json::Value::Array
+                                let json_array = serde_json::Value::Array(
+                                    vec.into_iter().map(|i| i32::try_from(i).unwrap_or(i as i32))
+                                    .map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                );
+                                json_map.insert(field_name, json_array);
+                            }
+                            Err(e) => {
+                                // If decompression fails, return the raw data as a string
+                                let error_msg = format!("Failed to decompress: {:?}", blob);
+                                json_map.insert(field_name, serde_json::Value::String(error_msg));
+                            }
+                        }
+                    } else {
+                        // Multiple fields - process in batch
+                        let field_names: Vec<String> = compressed_i32_blobs.keys().cloned().collect();
+                        let blobs: Vec<Vec<u8>> = compressed_i32_blobs.values().cloned().collect();
+                        
+                        match codec.decompress_many_i64(&blobs) {
+                            Ok(arrays) => {
+                                for (field_name, vec) in field_names.into_iter().zip(arrays.into_iter()) {
+                                    // Convert Vec<i64> to Vec<i32> and then to serde_json::Value::Array
+                                    let json_array = serde_json::Value::Array(
+                                        vec.into_iter().map(|i| i32::try_from(i).unwrap_or(i as i32))
+                                        .map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                    );
+                                    json_map.insert(field_name, json_array);
+                                }
+                            }
+                            Err(_) => {
+                                // Fallback to individual decompression
+                                for (field_name, blob) in compressed_i32_blobs {
+                                    match codec.decompress_i64(&blob) {
+                                        Ok(vec) => {
+                                            // Convert Vec<i64> to Vec<i32> and then to serde_json::Value::Array
+                                            let json_array = serde_json::Value::Array(
+                                                vec.into_iter().map(|i| i32::try_from(i).unwrap_or(i as i32))
+                                                .map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                            );
+                                            json_map.insert(field_name, json_array);
+                                        }
+                                        Err(_) => {
+                                            // Ultimate fallback to raw blob data as string
+                                            let error_msg = format!("Failed to decompress blob for field: {}", field_name);
+                                            json_map.insert(field_name, serde_json::Value::String(error_msg));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Process u32 fields (convert from u64 back to u32)
+                if !compressed_u32_blobs.is_empty() {
+                    let codec = orso::IntegerCodec::default();
+                    if compressed_u32_blobs.len() == 1 {
+                        // Single field - process individually
+                        let (field_name, blob) = compressed_u32_blobs.into_iter().next().unwrap();
+                        match codec.decompress_u64(&blob) {
+                            Ok(vec) => {
+                                // Convert Vec<u64> to Vec<u32> and then to serde_json::Value::Array
+                                let json_array = serde_json::Value::Array(
+                                    vec.into_iter().map(|i| u32::try_from(i).unwrap_or(i as u32))
+                                    .map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                );
+                                json_map.insert(field_name, json_array);
+                            }
+                            Err(e) => {
+                                // If decompression fails, return the raw data as a string
+                                let error_msg = format!("Failed to decompress: {:?}", blob);
+                                json_map.insert(field_name, serde_json::Value::String(error_msg));
+                            }
+                        }
+                    } else {
+                        // Multiple fields - process in batch
+                        let field_names: Vec<String> = compressed_u32_blobs.keys().cloned().collect();
+                        let blobs: Vec<Vec<u8>> = compressed_u32_blobs.values().cloned().collect();
+                        
+                        match codec.decompress_many_u64(&blobs) {
+                            Ok(arrays) => {
+                                for (field_name, vec) in field_names.into_iter().zip(arrays.into_iter()) {
+                                    // Convert Vec<u64> to Vec<u32> and then to serde_json::Value::Array
+                                    let json_array = serde_json::Value::Array(
+                                        vec.into_iter().map(|i| u32::try_from(i).unwrap_or(i as u32))
+                                        .map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                    );
+                                    json_map.insert(field_name, json_array);
+                                }
+                            }
+                            Err(_) => {
+                                // Fallback to individual decompression
+                                for (field_name, blob) in compressed_u32_blobs {
+                                    match codec.decompress_u64(&blob) {
+                                        Ok(vec) => {
+                                            // Convert Vec<u64> to Vec<u32> and then to serde_json::Value::Array
+                                            let json_array = serde_json::Value::Array(
+                                                vec.into_iter().map(|i| u32::try_from(i).unwrap_or(i as u32))
+                                                .map(|i| serde_json::Value::Number(serde_json::Number::from(i))).collect()
+                                            );
+                                            json_map.insert(field_name, json_array);
+                                        }
+                                        Err(_) => {
+                                            // Ultimate fallback to raw blob data as string
+                                            let error_msg = format!("Failed to decompress blob for field: {}", field_name);
+                                            json_map.insert(field_name, serde_json::Value::String(error_msg));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Process non-compressed fields and any fields that fell through
+                for (k, v) in &map {
+                    // Skip fields that were already processed as compressed
+                    if json_map.contains_key(k) {
+                        continue;
+                    }
+
+                    let json_value = match v {
+                        orso::Value::Null => serde_json::Value::Null,
+                        orso::Value::Boolean(b) => serde_json::Value::Bool(*b),
+                        orso::Value::Integer(i) => {
+                            // Check if this field should be a boolean based on field type
+                            if let Some(pos) = field_names.iter().position(|&name| name == *k) {
+                                if matches!(field_types.get(pos), Some(orso::FieldType::Boolean)) {
+                                    // This is a boolean field, convert 0/1 to bool
+                                    serde_json::Value::Bool(*i != 0)
                                 } else {
                                     serde_json::Value::Number(serde_json::Number::from(*i))
                                 }
-                            },
-                            orso::Value::Real(f) => {
-                                if let Some(n) = serde_json::Number::from_f64(*f) {
-                                    serde_json::Value::Number(n)
-                                } else {
-                                    serde_json::Value::String(f.to_string())
-                                }
+                            } else {
+                                serde_json::Value::Number(serde_json::Number::from(*i))
                             }
-                            orso::Value::Text(s) => {
-                                // Check if this might be a SQLite datetime that needs conversion
-                                if s.len() == 19 && s.chars().nth(4) == Some('-') && s.chars().nth(7) == Some('-') && s.chars().nth(10) == Some(' ') {
-                                    // This looks like SQLite datetime format: "2025-09-13 10:50:43"
-                                    // Convert to RFC3339 format: "2025-09-13T10:50:43Z"
-                                    let rfc3339_format = s.replace(' ', "T") + "Z";
-                                    serde_json::Value::String(rfc3339_format)
-                                } else {
-                                    serde_json::Value::String(s.clone())
-                                }
-                            },
-                            orso::Value::Blob(b) => {
-                                serde_json::Value::Array(
-                                    b.iter()
-                                    .map(|byte| serde_json::Value::Number(serde_json::Number::from(*byte)))
-                                    .collect()
-                                )
+                        },
+                        orso::Value::Real(f) => {
+                            if let Some(n) = serde_json::Number::from_f64(*f) {
+                                serde_json::Value::Number(n)
+                            } else {
+                                serde_json::Value::String(f.to_string())
                             }
+                        }
+                        orso::Value::Text(s) => {
+                            // Check if this might be a SQLite datetime that needs conversion
+                            if s.len() == 19 && s.chars().nth(4) == Some('-') && s.chars().nth(7) == Some('-') && s.chars().nth(10) == Some(' ') {
+                                // This looks like SQLite datetime format: "2025-09-13 10:50:43"
+                                // Convert to RFC3339 format: "2025-09-13T10:50:43Z"
+                                let rfc3339_format = s.replace(' ', "T") + "Z";
+                                serde_json::Value::String(rfc3339_format)
+                            } else {
+                                serde_json::Value::String(s.clone())
+                            }
+                        },
+                        orso::Value::Blob(b) => {
+                            serde_json::Value::Array(
+                                b.iter()
+                                .map(|byte| serde_json::Value::Number(serde_json::Number::from(*byte)))
+                                .collect()
+                            )
                         }
                     };
                     json_map.insert(k.clone(), json_value);
