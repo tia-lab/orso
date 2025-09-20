@@ -14,7 +14,8 @@ readme = "../README.md"
 
 [dependencies]
 orso-macros = { path = "../orso-macros", version = "0.0.2" }
-libsql = "0.9.23"
+libsql = { version = "0.9.23", optional = true }
+rusqlite = { version = "0.30", optional = true, features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dotenv = "0.15"
@@ -32,6 +33,11 @@ rand = "0.8"
 
 [dev-dependencies]
 tracing-test = "0.2"
+
+[features]
+default = ["libsql"]
+libsql = ["dep:libsql"]
+sqlite = ["dep:rusqlite"]
 
 [lib]
 name = "orso"
