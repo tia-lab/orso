@@ -40,6 +40,59 @@ impl IntegerCodec {
         ((u >> 1) as i32) ^ (-((u & 1) as i32))
     }
 
+    // Add general compression for any binary data
+    pub fn compress_bytes(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Simple LZ4 compression with header
+        let mut buf = Vec::with_capacity(data.len() / 2);
+        // header: magic + version + codec + data length
+        buf.extend_from_slice(b"ORSO"); // 0..4
+        buf.push(1); // 4: version
+        buf.push(1); // 5: codec LZ4
+        buf.push(4); // 6: type (4 = raw bytes)
+        buf.extend_from_slice(&(data.len() as u64).to_le_bytes()); // 7..15
+
+        // compress the data
+        let comp = lz4_flex::block::compress_prepend_size(data);
+        buf.extend_from_slice(&comp);
+        Ok(buf)
+    }
+
+    // Add general decompression for any binary data
+    pub fn decompress_bytes(&self, blob: &[u8]) -> Result<Vec<u8>> {
+        if blob.is_empty() {
+            return Ok(Vec::new());
+        }
+        if blob.len() < 15 {
+            bail!("blob too small");
+        }
+        if &blob[0..4] != b"ORSO" {
+            bail!("bad magic");
+        }
+        if blob[4] != 1 {
+            bail!("bad version");
+        }
+        if blob[5] != 1 {
+            bail!("unsupported codec");
+        }
+        if blob[6] != 4 {
+            bail!("unsupported type, expected raw bytes");
+        }
+        let original_len = u64::from_le_bytes(blob[7..15].try_into().unwrap()) as usize;
+
+        let decompressed = lz4_flex::block::decompress_size_prepended(&blob[15..])
+            .map_err(|e| anyhow!("lz4 decompress failed: {e}"))?;
+
+        if decompressed.len() != original_len {
+            bail!("decompressed length mismatch");
+        }
+
+        Ok(decompressed)
+    }
+
     pub fn compress_i64(&self, data: &Vec<i64>) -> Result<Vec<u8>> {
         if data.is_empty() {
             return Ok(Vec::new());
@@ -327,6 +380,16 @@ impl IntegerCodec {
 mod tests {
     use super::*;
     use rand::{rngs::StdRng, Rng, SeedableRng};
+
+    #[test]
+    fn roundtrip_bytes() -> Result<()> {
+        let c = IntegerCodec::default();
+        let data = b"Hello, World! This is a test of the byte compression system.".to_vec();
+        let blob = c.compress_bytes(&data)?;
+        let back = c.decompress_bytes(&blob)?;
+        assert_eq!(data, back);
+        Ok(())
+    }
 
     #[test]
     fn roundtrip_i64() -> Result<()> {
