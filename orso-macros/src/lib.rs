@@ -1425,6 +1425,17 @@ fn map_field_type(rust_type: &syn::Type, _field: &syn::Field) -> proc_macro2::To
     if let syn::Type::Path(type_path) = rust_type {
         if let Some(segment) = type_path.path.segments.last() {
             let type_name = segment.ident.to_string();
+            
+            // Handle Vec<T> types by checking the inner type
+            if type_name == "Vec" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(syn::GenericArgument::Type(inner_type)) = args.args.first() {
+                        // Recursively map the inner type
+                        return map_field_type(inner_type, _field);
+                    }
+                }
+            }
+            
             return match type_name.as_str() {
                 "String" => quote! { orso::FieldType::Text },
                 "i64" => quote! { orso::FieldType::BigInt },

@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::{self as orso};
+    use crate::{self as orso, FloatingCodec, IntegerCodec, Migrations, Utils};
     use orso::{
-        Database, DatabaseConfig, Filter, FilterOperator, Operator, Orso, Pagination, Sort,
-        SortOrder, Value,
+        migration, Database, DatabaseConfig, Filter, FilterOperator, Operator, Orso, Pagination,
+        Sort, SortOrder, Value,
     };
     use serde::{Deserialize, Serialize};
 
@@ -63,6 +63,49 @@ mod tests {
 
         #[orso_column(updated_at)]
         updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+
+    #[derive(Orso, serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
+    #[orso_table("field_type_debug")]
+    struct FieldTypeDebug {
+        #[orso_column(primary_key)]
+        id: Option<String>,
+
+        #[orso_column(compress)]
+        int_data: Vec<i64>,
+
+        #[orso_column(compress)]
+        float_data: Vec<f64>,
+
+        name: String,
+    }
+
+    #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+    #[orso_table("debug_compressed")]
+    struct DebugCompressed {
+        #[orso_column(primary_key)]
+        id: Option<String>,
+
+        #[orso_column(compress)]
+        data_points: Vec<i64>,
+
+        name: String,
+        age: i32,
+    }
+
+    #[tokio::test]
+    async fn test_field_type_debug() {
+        println!("Testing field types:");
+        let field_names = FieldTypeDebug::field_names();
+        let field_types = FieldTypeDebug::field_types();
+        let compressed_flags = FieldTypeDebug::field_compressed();
+
+        for i in 0..field_names.len() {
+            println!(
+                "Field: {} -> Type: {:?} -> Compressed: {}",
+                field_names[i], field_types[i], compressed_flags[i]
+            );
+        }
     }
 
     #[tokio::test]
@@ -703,13 +746,6 @@ mod tests {
 
         Ok(())
     }
-}
-
-#[cfg(test)]
-mod id_generation_tests {
-    use crate::{self as orso, FloatingCodec, IntegerCodec};
-    use orso::{migration, Database, DatabaseConfig, Migrations, Orso, Utils};
-    use serde::{Deserialize, Serialize};
 
     #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
     #[orso_table("id_generation_test")]
@@ -1526,13 +1562,460 @@ Test completed successfully!"
         std::fs::remove_file(db_path2)?;
 
         println!("\n=== Summary ===");
-        println!("All batch operations (insert, update, upsert) now properly handle compressed BLOB data!");
+        println!(
+        "All batch operations (insert, update, upsert) now properly handle compressed BLOB data!"
+    );
         println!("The fixes ensure that:");
         println!(
             "1. BLOB data is properly passed as parameters instead of being converted to NULL"
         );
         println!("2. Compressed data maintains its integrity through all operations");
         println!("3. Batch operations work correctly with the ORM's compression features");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn debug_compression_check_vector_collect() -> Result<(), Box<dyn std::error::Error>> {
+        // Create in-memory database
+        let config = DatabaseConfig::memory();
+        let db = Database::init(config).await?;
+
+        // Create table
+        use orso::{migration, Migrations};
+        Migrations::init(&db, &[migration!(DebugCompressed)]).await?;
+
+        // Create test data
+        let test_data = DebugCompressed {
+            id: None,                       // Will be auto-generated
+            data_points: (0..10).collect(), // Sample data points
+            name: "Test Data".to_string(),
+            age: 25,
+        };
+
+        println!("Original data_points: {:?}", test_data.data_points);
+
+        // Check what to_map produces
+        let map = test_data.to_map()?;
+        println!("Map keys: {:?}", map.keys().collect::<Vec<_>>());
+
+        for (key, value) in &map {
+            match value {
+                orso::Value::Blob(blob) => {
+                    println!("{}: BLOB ({} bytes)", key, blob.len());
+                    if blob.len() >= 4 && &blob[0..4] == b"ORSO" {
+                        println!("  -> Has ORSO header ✓");
+                    } else {
+                        println!("  -> No ORSO header ✗");
+                    }
+                }
+                orso::Value::Text(text) => {
+                    println!("{}: TEXT ({})", key, text);
+                }
+                _ => {
+                    println!("{}: {:?}", key, value);
+                }
+            }
+        }
+
+        // Insert data
+        test_data.insert(&db).await?;
+
+        // Check what's actually in the database
+        let mut rows = db
+            .conn
+            .query("SELECT data_points FROM debug_compressed LIMIT 1", ())
+            .await?;
+        if let Some(row) = rows.next().await? {
+            match row.get_value(0) {
+                Ok(libsql::Value::Blob(blob)) => {
+                    println!("Database value: BLOB ({} bytes)", blob.len());
+                    if blob.len() >= 4 && &blob[0..4] == b"ORSO" {
+                        println!("  -> Has ORSO header ✓");
+                    } else {
+                        println!("  -> No ORSO header ✗");
+                        println!(
+                            "  -> First 32 bytes as text: {:?}",
+                            String::from_utf8_lossy(&blob[0..std::cmp::min(32, blob.len())])
+                        );
+                    }
+                }
+                Ok(libsql::Value::Text(text)) => {
+                    println!("Database value: TEXT ({})", text);
+                }
+                Ok(other) => {
+                    println!("Database value: {:?}", other);
+                }
+                Err(e) => {
+                    println!("Database value error: {}", e);
+                }
+            }
+        }
+
+        // Retrieve all data (since we don't know the auto-generated ID)
+        let all_records = DebugCompressed::find_all(&db).await?;
+        assert_eq!(all_records.len(), 1);
+
+        let retrieved = &all_records[0];
+        println!("Retrieved data_points: {:?}", retrieved.data_points);
+        assert_eq!(retrieved.name, "Test Data");
+        assert_eq!(retrieved.age, 25);
+        assert_eq!(retrieved.data_points.len(), 10);
+        assert_eq!(retrieved.data_points[0], 0);
+        assert_eq!(retrieved.data_points[9], 9);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn debug_compression_check_vector_simple() -> Result<(), Box<dyn std::error::Error>> {
+        // Create in-memory database
+        let config = DatabaseConfig::memory();
+        let db = Database::init(config).await?;
+
+        // Create table
+        use orso::{migration, Migrations};
+        Migrations::init(&db, &[migration!(DebugCompressed)]).await?;
+
+        // Create test data
+        let test_data = DebugCompressed {
+            id: None, // Will be auto-generated
+            data_points: vec![
+                1000, 2000, 3000, 4000, 5000, 1000, 2000, 3000, 4000, 5000, 1000, 2000, 3000, 4000,
+                5000, 1000, 2000, 3000, 4000, 5000, 1000, 2000, 3000, 4000, 5000, 1000, 2000, 3000,
+                4000, 5000, 1000, 2000, 3000, 4000, 5000, 1000, 2000, 3000, 4000, 5000, 1000, 2000,
+                3000, 4000, 5000,
+            ], // Sample data points
+            name: "Test Data".to_string(),
+            age: 25,
+        };
+
+        println!("Original data_points: {:?}", test_data.data_points);
+
+        // Check what to_map produces
+        let map = test_data.to_map()?;
+        println!("Map keys: {:?}", map.keys().collect::<Vec<_>>());
+
+        for (key, value) in &map {
+            match value {
+                orso::Value::Blob(blob) => {
+                    println!("{}: BLOB ({} bytes)", key, blob.len());
+                    if blob.len() >= 4 && &blob[0..4] == b"ORSO" {
+                        println!("  -> Has ORSO header ✓");
+                    } else {
+                        println!("  -> No ORSO header ✗");
+                    }
+                }
+                orso::Value::Text(text) => {
+                    println!("{}: TEXT ({})", key, text);
+                }
+                _ => {
+                    println!("{}: {:?}", key, value);
+                }
+            }
+        }
+
+        // Insert data
+        test_data.insert(&db).await?;
+
+        // Check what's actually in the database
+        let mut rows = db
+            .conn
+            .query("SELECT data_points FROM debug_compressed LIMIT 1", ())
+            .await?;
+        if let Some(row) = rows.next().await? {
+            match row.get_value(0) {
+                Ok(libsql::Value::Blob(blob)) => {
+                    println!("Database value: BLOB ({} bytes)", blob.len());
+                    if blob.len() >= 4 && &blob[0..4] == b"ORSO" {
+                        println!("  -> Has ORSO header ✓");
+                    } else {
+                        println!("  -> No ORSO header ✗");
+                        println!(
+                            "  -> First 32 bytes as text: {:?}",
+                            String::from_utf8_lossy(&blob[0..std::cmp::min(32, blob.len())])
+                        );
+                    }
+                }
+                Ok(libsql::Value::Text(text)) => {
+                    println!("Database value: TEXT ({})", text);
+                }
+                Ok(other) => {
+                    println!("Database value: {:?}", other);
+                }
+                Err(e) => {
+                    println!("Database value error: {}", e);
+                }
+            }
+        }
+
+        // Retrieve all data (since we don't know the auto-generated ID)
+        let all_records = DebugCompressed::find_all(&db).await?;
+        assert_eq!(all_records.len(), 1);
+
+        let retrieved = &all_records[0];
+        println!("Retrieved data_points: {:?}", retrieved.data_points);
+        assert_eq!(retrieved.name, "Test Data");
+        assert_eq!(retrieved.age, 25);
+        assert_eq!(retrieved.data_points.len(), 10);
+        assert_eq!(retrieved.data_points[0], 0);
+        assert_eq!(retrieved.data_points[9], 9);
+
+        Ok(())
+    }
+
+    #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+    #[orso_table("collect_vs_vec_test")]
+    struct CollectVsVecTest {
+        #[orso_column(primary_key)]
+        id: Option<String>,
+
+        #[orso_column(compress)]
+        collected_data: Vec<i64>, // Created with .collect()
+
+        #[orso_column(compress)]
+        vec_data: Vec<i64>, // Created with vec![]
+
+        name: String,
+    }
+
+    #[tokio::test]
+    async fn test_collect_vs_vec_macro() -> Result<(), Box<dyn std::error::Error>> {
+        // Create in-memory database
+        let config = DatabaseConfig::memory();
+        let db = Database::init(config).await?;
+
+        // Create table
+        Migrations::init(&db, &[migration!(CollectVsVecTest)]).await?;
+
+        // Create test data - one with collect, one with vec!
+        let test_data = CollectVsVecTest {
+            id: None,
+            collected_data: (0..5).collect(),   // Using .collect()
+            vec_data: vec![10, 20, 30, 40, 50], // Using vec![]
+            name: "Test Data".to_string(),
+        };
+
+        println!("Original collected_data: {:?}", test_data.collected_data);
+        println!("Original vec_data: {:?}", test_data.vec_data);
+
+        // Check what to_map produces
+        let map = test_data.to_map()?;
+        println!("\nMap keys and values:");
+        for (key, value) in &map {
+            match value {
+                orso::Value::Blob(blob) => {
+                    println!("{}: BLOB ({} bytes)", key, blob.len());
+                    if blob.len() >= 4 && &blob[0..4] == b"ORSO" {
+                        println!("  -> Has ORSO header ✓");
+                    } else {
+                        println!("  -> No ORSO header ✗");
+                        println!(
+                            "  -> First chars: {}",
+                            String::from_utf8_lossy(&blob[0..std::cmp::min(32, blob.len())])
+                        );
+                    }
+                }
+                orso::Value::Text(text) => {
+                    println!("{}: TEXT ({})", key, text);
+                }
+                _ => {
+                    println!("{}: {:?}", key, value);
+                }
+            }
+        }
+
+        // Insert data
+        test_data.insert(&db).await?;
+
+        // Check what's actually in the database
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT collected_data, vec_data FROM collect_vs_vec_test LIMIT 1",
+                (),
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            println!("\nDatabase values:");
+
+            // Check collected_data
+            match row.get_value(0) {
+                Ok(libsql::Value::Blob(blob)) => {
+                    println!("collected_data in DB: BLOB ({} bytes)", blob.len());
+                    if blob.len() >= 4 && &blob[0..4] == b"ORSO" {
+                        println!("  -> Has ORSO header ✓");
+                    } else {
+                        println!("  -> No ORSO header ✗");
+                    }
+                }
+                Ok(libsql::Value::Text(text)) => {
+                    println!("collected_data in DB: TEXT ({})", text);
+                }
+                _ => {}
+            }
+
+            // Check vec_data
+            match row.get_value(1) {
+                Ok(libsql::Value::Blob(blob)) => {
+                    println!("vec_data in DB: BLOB ({} bytes)", blob.len());
+                    if blob.len() >= 4 && &blob[0..4] == b"ORSO" {
+                        println!("  -> Has ORSO header ✓");
+                    } else {
+                        println!("  -> No ORSO header ✗");
+                    }
+                }
+                Ok(libsql::Value::Text(text)) => {
+                    println!("vec_data in DB: TEXT ({})", text);
+                }
+                _ => {}
+            }
+        }
+
+        // Retrieve and verify
+        let all_records = CollectVsVecTest::find_all(&db).await?;
+        assert_eq!(all_records.len(), 1);
+
+        let retrieved = &all_records[0];
+        println!("\nRetrieved data:");
+        println!("Retrieved collected_data: {:?}", retrieved.collected_data);
+        println!("Retrieved vec_data: {:?}", retrieved.vec_data);
+
+        Ok(())
+    }
+
+    #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
+    #[orso_table("allocator_test")]
+    struct AllocatorTest {
+        #[orso_column(primary_key)]
+        id: Option<String>,
+
+        #[orso_column(compress)]
+        compressed_regular: Vec<i64>, // This should work
+
+        #[orso_column(compress)]
+        compressed_with_alloc: Vec<i64>, // Fixed: use standard Vec<i64>
+
+        name: String,
+        age: i32,
+    }
+
+    #[tokio::test]
+    async fn test_allocator_specific_vec() -> Result<(), Box<dyn std::error::Error>> {
+        // Create in-memory database
+        let config = DatabaseConfig::memory();
+        let db = Database::init(config).await?;
+
+        // Create table
+        Migrations::init(&db, &[migration!(AllocatorTest)]).await?;
+
+        // Create test data
+        let test_data = AllocatorTest {
+            id: None,
+            compressed_regular: vec![1, 2, 3, 4, 5],
+            compressed_with_alloc: vec![10, 20, 30, 40, 50],
+            name: "Test Data".to_string(),
+            age: 25,
+        };
+
+        println!(
+            "Original compressed_regular: {:?}",
+            test_data.compressed_regular
+        );
+        println!(
+            "Original compressed_with_alloc: {:?}",
+            test_data.compressed_with_alloc
+        );
+
+        // Check what to_map produces
+        let map = test_data.to_map()?;
+        println!("Map keys: {:?}", map.keys().collect::<Vec<_>>());
+
+        for (key, value) in &map {
+            match value {
+                orso::Value::Blob(blob) => {
+                    println!("{}: BLOB ({} bytes)", key, blob.len());
+                    if blob.len() >= 4 && &blob[0..4] == b"ORSO" {
+                        println!("  -> Has ORSO header ✓");
+                    } else {
+                        println!("  -> No ORSO header ✗");
+                        println!(
+                            "  -> First 32 chars: {}",
+                            String::from_utf8_lossy(&blob[0..std::cmp::min(32, blob.len())])
+                        );
+                    }
+                }
+                orso::Value::Text(text) => {
+                    println!("{}: TEXT ({})", key, text);
+                }
+                _ => {
+                    println!("{}: {:?}", key, value);
+                }
+            }
+        }
+
+        // Insert data
+        test_data.insert(&db).await?;
+
+        // Check what's actually in the database
+        let mut rows = db
+            .conn
+            .query(
+                "SELECT compressed_regular, compressed_with_alloc FROM allocator_test LIMIT 1",
+                (),
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            // Check compressed_regular
+            match row.get_value(0) {
+                Ok(libsql::Value::Blob(blob)) => {
+                    println!("compressed_regular in DB: BLOB ({} bytes)", blob.len());
+                    if blob.len() >= 4 && &blob[0..4] == b"ORSO" {
+                        println!("  -> Has ORSO header ✓");
+                    } else {
+                        println!("  -> No ORSO header ✗");
+                    }
+                }
+                Ok(libsql::Value::Text(text)) => {
+                    println!("compressed_regular in DB: TEXT ({})", text);
+                }
+                _ => {}
+            }
+
+            // Check compressed_with_alloc
+            match row.get_value(1) {
+                Ok(libsql::Value::Blob(blob)) => {
+                    println!("compressed_with_alloc in DB: BLOB ({} bytes)", blob.len());
+                    if blob.len() >= 4 && &blob[0..4] == b"ORSO" {
+                        println!("  -> Has ORSO header ✓");
+                    } else {
+                        println!("  -> No ORSO header ✗");
+                        println!(
+                            "  -> First 32 chars: {}",
+                            String::from_utf8_lossy(&blob[0..std::cmp::min(32, blob.len())])
+                        );
+                    }
+                }
+                Ok(libsql::Value::Text(text)) => {
+                    println!("compressed_with_alloc in DB: TEXT ({})", text);
+                }
+                _ => {}
+            }
+        }
+
+        // Retrieve and verify
+        let all_records = AllocatorTest::find_all(&db).await?;
+        assert_eq!(all_records.len(), 1);
+
+        let retrieved = &all_records[0];
+        println!(
+            "Retrieved compressed_regular: {:?}",
+            retrieved.compressed_regular
+        );
+        println!(
+            "Retrieved compressed_with_alloc: {:?}",
+            retrieved.compressed_with_alloc
+        );
 
         Ok(())
     }
