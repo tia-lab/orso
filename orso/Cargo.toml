@@ -26,10 +26,9 @@ tracing = "0.1"
 anyhow = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 async-trait = "0.1"
-lz4_flex = { version = "0.11", features = ["std"] }
-integer-encoding = "3"
-rayon = "1.7"
 rand = "0.8"
+cydec = { git = "https://github.com/tia-lab/cydec" }
+
 
 [dev-dependencies]
 tracing-test = "0.2"

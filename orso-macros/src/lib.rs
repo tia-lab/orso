@@ -1234,32 +1234,32 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
 
 
             // Utility methods
-            fn row_to_map(row: &libsql::Row) -> orso::Result<std::collections::HashMap<String, orso::Value>> {
+            fn row_to_map(row: &orso::libsql::Row) -> orso::Result<std::collections::HashMap<String, orso::Value>> {
                 let mut map = std::collections::HashMap::new();
                 for i in 0..row.column_count() {
                     if let Some(column_name) = row.column_name(i) {
-                        let value = row.get_value(i).unwrap_or(libsql::Value::Null);
+                        let value = row.get_value(i).unwrap_or(orso::libsql::Value::Null);
                         map.insert(column_name.to_string(), Self::libsql_value_to_value(&value));
                     }
                 }
                 Ok(map)
             }
 
-            fn value_to_libsql_value(value: &orso::Value) -> libsql::Value {
+            fn value_to_libsql_value(value: &orso::Value) -> orso::libsql::Value {
                 match value {
-                    orso::Value::Null => libsql::Value::Null,
-                    orso::Value::Integer(i) => libsql::Value::Integer(*i),
-                    orso::Value::Real(f) => libsql::Value::Real(*f),
-                    orso::Value::Text(s) => libsql::Value::Text(s.clone()),
-                    orso::Value::Blob(b) => libsql::Value::Blob(b.clone()),
-                    orso::Value::Boolean(b) => libsql::Value::Integer(if *b { 1 } else { 0 }),
+                    orso::Value::Null => orso::libsql::Value::Null,
+                    orso::Value::Integer(i) => orso::libsql::Value::Integer(*i),
+                    orso::Value::Real(f) => orso::libsql::Value::Real(*f),
+                    orso::Value::Text(s) => orso::libsql::Value::Text(s.clone()),
+                    orso::Value::Blob(b) => orso::libsql::Value::Blob(b.clone()),
+                    orso::Value::Boolean(b) => orso::libsql::Value::Integer(if *b { 1 } else { 0 }),
                 }
             }
 
-            fn libsql_value_to_value(value: &libsql::Value) -> orso::Value {
+            fn libsql_value_to_value(value: &orso::libsql::Value) -> orso::Value {
                 match value {
-                    libsql::Value::Null => orso::Value::Null,
-                    libsql::Value::Integer(i) => {
+                    orso::libsql::Value::Null => orso::Value::Null,
+                    orso::libsql::Value::Integer(i) => {
                         // SQLite stores booleans as integers 0/1
                         // Check if this might be a boolean value
                         if *i == 0 || *i == 1 {
@@ -1270,9 +1270,9 @@ pub fn derive_orso(input: TokenStream) -> TokenStream {
                             orso::Value::Integer(*i)
                         }
                     },
-                    libsql::Value::Real(f) => orso::Value::Real(*f),
-                    libsql::Value::Text(s) => orso::Value::Text(s.clone()),
-                    libsql::Value::Blob(b) => orso::Value::Blob(b.clone()),
+                    orso::libsql::Value::Real(f) => orso::Value::Real(*f),
+                    orso::libsql::Value::Text(s) => orso::Value::Text(s.clone()),
+                    orso::libsql::Value::Blob(b) => orso::Value::Blob(b.clone()),
                 }
             }
         }
@@ -1425,7 +1425,7 @@ fn map_field_type(rust_type: &syn::Type, _field: &syn::Field) -> proc_macro2::To
     if let syn::Type::Path(type_path) = rust_type {
         if let Some(segment) = type_path.path.segments.last() {
             let type_name = segment.ident.to_string();
-            
+
             // Handle Vec<T> types by checking the inner type
             if type_name == "Vec" {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
@@ -1435,7 +1435,7 @@ fn map_field_type(rust_type: &syn::Type, _field: &syn::Field) -> proc_macro2::To
                     }
                 }
             }
-            
+
             return match type_name.as_str() {
                 "String" => quote! { orso::FieldType::Text },
                 "i64" => quote! { orso::FieldType::BigInt },

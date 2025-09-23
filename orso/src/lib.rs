@@ -1,8 +1,6 @@
 pub mod database;
 pub mod error;
 pub mod filters;
-pub mod floating_codec;
-pub mod integer_codec;
 pub mod macros;
 pub mod migrations;
 pub mod operations;
@@ -19,12 +17,17 @@ mod test;
 #[cfg(feature = "sqlite")]
 mod test_sqlite;
 
+// Re-export libsql and rusqlite for macro use
+#[cfg(feature = "libsql")]
+pub use libsql;
+#[cfg(feature = "sqlite")]
+pub use rusqlite;
+
 pub use chrono;
+pub use cydec::{FloatingCodec, IntegerCodec};
 pub use database::*;
 pub use error::{Error, Result};
 pub use filters::{Filter, FilterOperations, FilterOperator, FilterValue, SearchFilter, Sort};
-pub use floating_codec::FloatingCodec;
-pub use integer_codec::IntegerCodec;
 pub use migrations::{MigrationEntry, MigrationResult, MigrationTrait, Migrations};
 pub use orso_macros::{orso_column, orso_table, Orso};
 pub use pagination::{CursorPaginatedResult, CursorPagination, PaginatedResult, Pagination};
