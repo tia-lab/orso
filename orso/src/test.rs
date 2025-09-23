@@ -1002,9 +1002,7 @@ Test completed successfully!"
 
     #[tokio::test]
     async fn batch_compression_test() -> Result<(), Box<dyn std::error::Error>> {
-        use orso::{
-            migration, Database, DatabaseConfig, FloatingCodec, IntegerCodec, Migrations, Orso,
-        };
+        use orso::{migration, Database, DatabaseConfig, Migrations, Orso};
         use serde::{Deserialize, Serialize};
 
         #[derive(Orso, Serialize, Deserialize, Clone, Debug, Default)]
